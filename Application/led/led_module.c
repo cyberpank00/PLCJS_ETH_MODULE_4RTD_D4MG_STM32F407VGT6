@@ -36,6 +36,11 @@
 #define LED_NOLINK_PULSES       3u
 #define LED_NOLINK_PERIOD_MS    3000u
 
+/* CAL_ARMED: a dense 5-pulse train each period, visually distinct from the
+ * 1/2/3-blink states — signals that an emergency cal-erase is armed. */
+#define LED_CALARM_PULSES       5u
+#define LED_CALARM_PERIOD_MS    1500u
+
 /* ---------------------------------------------------------------------------
  * Internal state for the shared burst-pattern engine (NO_POLLING / POLLING /
  * NO_LINK). FACT_RESET has its own state below.
@@ -83,6 +88,10 @@ static void led_load_pattern(led_state_t st)
     case LED_STATE_NO_LINK:
         s_pattern.pulses    = LED_NOLINK_PULSES;
         s_pattern.period_ms = LED_NOLINK_PERIOD_MS;
+        break;
+    case LED_STATE_CAL_ARMED:
+        s_pattern.pulses    = LED_CALARM_PULSES;
+        s_pattern.period_ms = LED_CALARM_PERIOD_MS;
         break;
     case LED_STATE_FACTORY_RESET:
     case LED_STATE_NO_POLLING:
@@ -170,6 +179,15 @@ void led_module_signal_factory_reset(void)
     s_freset_timer_ms  = 0u;
     s_freset_on_phase  = 1u;
     led_set(true);
+}
+
+void led_module_signal_cal_erase(void)
+{
+    /* Reuse the sticky factory-reset blink path with a faster cadence so the
+     * pre-reboot confirmation is visually distinct. The device reboots right
+     * after this, so overriding the factory-reset timing here is harmless. */
+    led_module_set_factory_reset_timing(40u, 40u);
+    led_module_signal_factory_reset();
 }
 
 void led_module_set_factory_reset_timing(uint16_t on_ms, uint16_t off_ms)

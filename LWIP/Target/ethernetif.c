@@ -29,6 +29,7 @@
 /* USER CODE BEGIN Include for User BSP */
 #include "ksz8863.h"
 #include "lwip/dhcp.h"
+#include "net_id.h"
 #include "settings.h"
 /* USER CODE END Include for User BSP */
 #include <string.h>
@@ -191,12 +192,10 @@ static void low_level_init(struct netif *netif)
 
    uint8_t MACAddr[6] ;
   heth.Instance = ETH;
-  MACAddr[0] = 0x02;
-  MACAddr[1] = 0x01;
-  MACAddr[2] = 0x23;
-  MACAddr[3] = 0x45;
-  MACAddr[4] = 0x67;
-  MACAddr[5] = 0x89;
+  /* Per-device MAC derived from the STM32 96-bit unique ID (see net_id.c).
+   * Unique per chip and identical to the bootloader's, without any stored
+   * value or per-unit provisioning. */
+  net_id_get_mac(MACAddr);
   heth.Init.MACAddr = &MACAddr[0];
   heth.Init.MediaInterface = HAL_ETH_RMII_MODE;
   heth.Init.TxDesc = DMATxDscrTab;

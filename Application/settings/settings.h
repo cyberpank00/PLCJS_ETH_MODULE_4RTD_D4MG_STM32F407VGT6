@@ -18,7 +18,9 @@ extern "C" {
 
 /* Magic and version --------------------------------------------------------- */
 #define SETTINGS_MAGIC          0x04D14A57u
-#define SETTINGS_VERSION        1u
+/* v2: calibration coefficients moved to the dedicated write-once calstore
+ * (see calstore.h); cal_gain/cal_offset removed from this structure. */
+#define SETTINGS_VERSION        2u
 
 #define SETTINGS_RTD_CHANNELS   4u
 #define SETTINGS_RTD_RANGES     2u
@@ -93,9 +95,9 @@ typedef struct {
     uint8_t  reserved_a[SETTINGS_RTD_CHANNELS];
     uint16_t ch_custom_w100[SETTINGS_RTD_CHANNELS];/* W100 × 10000            */
 
-    /* 2-point linear calibration: R_true = gain·R_raw + offset, per range. */
-    float    cal_gain[SETTINGS_RTD_CHANNELS][SETTINGS_RTD_RANGES];
-    float    cal_offset[SETTINGS_RTD_CHANNELS][SETTINGS_RTD_RANGES];
+    /* NOTE: the 2-point linear calibration (R_true = gain·R_raw + offset) is
+     * NOT stored here. It lives in the write-once calstore (calstore.h) in its
+     * own Flash sector so it survives factory reset and can be locked. */
 
     /* Nominal RREF (Ω) per range (low, high). */
     float    rref_nominal[SETTINGS_RTD_RANGES];

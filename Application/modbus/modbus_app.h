@@ -27,15 +27,20 @@
   *      112..115 gateway octets                116 use DHCP (0/1)
   *      117 SAVE trigger (0xA5A5)              118 REBOOT (0xB00B) / BOOT (0xB007)
   *      119 FACTORY RESET trigger (0xDEAD)     130 on-chip temperature (RO)
+  *      131 CAL COMMIT trigger (0xCA00|slot)   132 CAL ERASE ARM (0xC1A5)
   *    Per channel, base 500 + ch*10:
   *      +0 enabled (0/1)      +1 sensor type (rtd_type_t)
   *      +2 alpha mode (0 default / 1 custom)   +3 custom W100 ×10000
   *      +4 calibration range override (0 auto / 1 low / 2 high, runtime only)
-  *    Calibration coefficients (float32), base 540 + ch*8:
+  *    Calibration coefficients (float32), base 540 + ch*8 (WRITE-ONCE):
   *      +0..1 gain low range     +2..3 offset low range
   *      +4..5 gain high range    +6..7 offset high range
+  *      Writes are a live preview and are rejected once the (channel,range)
+  *      slot is committed. Commit = write 0xCA00|(ch*2+range) to register 131.
   *    Nominal reference resistors (float32 Ω):
   *      580..581 RREF low        582..583 RREF high
+  *  ---- Input Registers (extra) ------------------------------------------
+  *      127 calibration lock bitmask (RO): bit (ch*2+range) = slot committed
   ******************************************************************************
   */
 #ifndef APPLICATION_MODBUS_APP_H
@@ -56,6 +61,18 @@ extern "C" {
 #define MODBUS_TRIG_FACTORY_RESET   0xDEADu
 #define MODBUS_TRIG_BOOTLOADER      0xB007u
 
+/* Calibration commit: value = MB_CAL_COMMIT_BASE | (ch*2 + range), slot 0..7. */
+#define MB_CAL_COMMIT_BASE          0xCA00u
+#define MB_CAL_COMMIT_SLOT_MASK     0x00FFu
+
+/* Emergency calibration-erase arming magic (two-factor: this + button). */
+#define MODBUS_TRIG_CAL_ERASE_ARM   0xC1A5u
+
+/* Window after arming during which a physical button confirm erases the
+ * calibration sector, and the button hold required to confirm (ms). */
+#define CAL_ERASE_ARM_WINDOW_MS     30000u
+#define CAL_ERASE_CONFIRM_MS        3000u
+
 /* No-init RAM cell shared with the bootloader. */
 #define BOOT_REQUEST_FLAG_ADDR      0x2001FFF0u
 #define BOOT_REQUEST_MAGIC          0xB007CAFEu
@@ -73,6 +90,8 @@ extern "C" {
 #define MB_HR_TRIG_REBOOT           118u
 #define MB_HR_TRIG_FACTORY_RESET    119u
 #define MB_HR_TEMPERATURE           130u
+#define MB_HR_CAL_COMMIT            131u
+#define MB_HR_CAL_ERASE_ARM        132u
 
 /* ---- Global input registers ---- */
 #define MB_IR_FW_VER_MAJOR          120u
@@ -81,6 +100,7 @@ extern "C" {
 #define MB_IR_UPTIME_HI             123u
 #define MB_IR_MODULE_ID             125u
 #define MB_IR_TEMPERATURE           126u
+#define MB_IR_CAL_LOCK              127u
 
 /* ---- RTD readings (input registers) ---- */
 #define MB_RTD_CHANNELS             4u
@@ -127,6 +147,16 @@ void modbus_app_notify_request(void);
 
 /** Get the populated nmbs_callbacks structure for nmbs_server_create(). */
 const nmbs_callbacks* modbus_app_get_callbacks(void);
+
+/**
+ * Returns 1 if an emergency calibration erase has been armed over Modbus and
+ * the arming window (CAL_ERASE_ARM_WINDOW_MS) has not yet expired. Used by the
+ * application loop to gate the physical button confirmation. Non-destructive.
+ */
+uint8_t modbus_app_cal_erase_armed(void);
+
+/** Clear the armed calibration-erase state (e.g. after the action completes). */
+void modbus_app_clear_cal_erase_arm(void);
 
 #ifdef __cplusplus
 }

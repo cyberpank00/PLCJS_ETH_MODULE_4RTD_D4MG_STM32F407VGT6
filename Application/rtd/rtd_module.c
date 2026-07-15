@@ -9,6 +9,7 @@
 
 #include <math.h>
 
+#include "calstore.h"
 #include "main.h"
 #include "max31865.h"
 #include "rtd_scales.h"
@@ -167,7 +168,7 @@ void rtd_module_tick(void)
         const float ratio = (float)code / RTD_ADC_FULL_SCALE;
         const float rref  = s->rref_nominal[range];
         const float r_raw = ratio * rref;
-        const float r_cal = s->cal_gain[ch][range] * r_raw + s->cal_offset[ch][range];
+        const float r_cal = calstore_gain(ch, range) * r_raw + calstore_offset(ch, range);
 
         st->r_raw = r_raw;
         st->r_cal = r_cal;

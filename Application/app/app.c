@@ -20,6 +20,7 @@
 #include "stm32f4xx_hal.h"
 
 #include "button_module.h"
+#include "calstore.h"
 #include "led_module.h"
 #include "modbus_app.h"
 #include "modbus_tcp_server.h"
@@ -107,6 +108,30 @@ static void perform_factory_reset(void)
 }
 
 /* ---------------------------------------------------------------------------
+ * Emergency calibration erase (two-factor)
+ *
+ * Entered only after a Modbus arm (register 132 = 0xC1A5) followed by a
+ * physical button confirmation. Erases the write-once calibration sector,
+ * reverting every slot to identity (gain 1.0, offset 0.0) and re-enabling
+ * writes, then reboots for a clean start. The sector erase blocks the CPU for
+ * ~1-2 s, so the confirmation blink is started first.
+ * ------------------------------------------------------------------------- */
+static void perform_cal_erase(void)
+{
+    led_module_signal_cal_erase();
+    HAL_IWDG_Refresh(&hiwdg);
+
+    (void)calstore_erase();
+
+    const uint32_t deadline = HAL_GetTick() + 1500u;
+    while (HAL_GetTick() < deadline) {
+        HAL_IWDG_Refresh(&hiwdg);
+        osDelay(50);
+    }
+    NVIC_SystemReset();
+}
+
+/* ---------------------------------------------------------------------------
  * Network bring-up
  * ------------------------------------------------------------------------- */
 static void apply_network_config(void)
@@ -164,6 +189,11 @@ void app_run(void)
     settings_init();
     settings_t* s = settings_get();
 
+    /* Load write-once calibration coefficients from their dedicated Flash
+     * sector. Un-committed (channel, range) pairs default to identity
+     * (gain 1.0, offset 0.0). Survives factory reset. */
+    calstore_init();
+
     /* Initialise the LED module and spawn its task BEFORE the button check.
      * The factory-reset burst (10 short blinks) is driven by led_module_tick()
      * which runs from led_task; if the task is not yet running, the burst is
@@ -217,7 +247,20 @@ void app_run(void)
     uint32_t tick = osKernelGetTickCount();
     for (;;) {
         HAL_IWDG_Refresh(&hiwdg);
-        update_led_state_from_traffic();
+
+        /* Two-factor emergency calibration erase: a Modbus arm plus a physical
+         * button confirmation within the arming window. While armed, the LED
+         * shows a distinct pattern instead of the traffic state. */
+        if (modbus_app_cal_erase_armed()) {
+            led_module_set_state(LED_STATE_CAL_ARMED);
+            if (button_is_pressed() && button_wait_held(CAL_ERASE_CONFIRM_MS)) {
+                modbus_app_clear_cal_erase_arm();
+                perform_cal_erase();
+                /* Not reached. */
+            }
+        } else {
+            update_led_state_from_traffic();
+        }
 
         if (modbus_app_take_pending_save()) {
             HAL_IWDG_Refresh(&hiwdg);

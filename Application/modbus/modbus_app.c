@@ -12,6 +12,7 @@
 #include "cmsis_os.h"
 #include "stm32f4xx_hal.h"
 
+#include "calstore.h"
 #include "led_module.h"
 #include "rtd_module.h"
 #include "rtd_scales.h"
@@ -33,6 +34,10 @@ static volatile uint8_t s_pending_factory_reset  = 0u;
 static volatile uint8_t s_pending_bootloader     = 0u;
 static volatile uint32_t s_last_request_tick     = 0u;
 
+/* Emergency calibration-erase arming (two-factor with the physical button). */
+static volatile uint8_t  s_cal_erase_armed    = 0u;
+static volatile uint32_t s_cal_erase_arm_tick = 0u;
+
 void modbus_app_init(void)
 {
     s_pending_save          = 0u;
@@ -40,6 +45,23 @@ void modbus_app_init(void)
     s_pending_factory_reset = 0u;
     s_pending_bootloader    = 0u;
     s_last_request_tick     = 0u;
+    s_cal_erase_armed       = 0u;
+    s_cal_erase_arm_tick    = 0u;
+}
+
+uint8_t modbus_app_cal_erase_armed(void)
+{
+    if (s_cal_erase_armed == 0u) { return 0u; }
+    if ((HAL_GetTick() - s_cal_erase_arm_tick) > CAL_ERASE_ARM_WINDOW_MS) {
+        s_cal_erase_armed = 0u;      /* window expired */
+        return 0u;
+    }
+    return 1u;
+}
+
+void modbus_app_clear_cal_erase_arm(void)
+{
+    s_cal_erase_armed = 0u;
 }
 
 void modbus_app_notify_request(void)      { s_last_request_tick = HAL_GetTick(); }
@@ -86,16 +108,9 @@ static float float_set_word(float f, uint8_t word, uint16_t v)
     return o;
 }
 
-static float* cal_float_ptr(settings_t* s, uint8_t ch, uint8_t slot)
-{
-    switch (slot) {
-    case 0u: return &s->cal_gain[ch][RTD_RANGE_LOW];
-    case 1u: return &s->cal_offset[ch][RTD_RANGE_LOW];
-    case 2u: return &s->cal_gain[ch][RTD_RANGE_HIGH];
-    case 3u: return &s->cal_offset[ch][RTD_RANGE_HIGH];
-    default: return NULL;
-    }
-}
+/* Modbus calibration slot codes (register 540+ layout) map 1:1 onto the
+ * calstore slot codes: 0 gain-low, 1 offset-low, 2 gain-high, 3 offset-high.
+ * The (channel, range) pair for a slot is (ch, slot >> 1). */
 
 /* ---------------------------------------------------------------------------
  * Address-range helpers.
@@ -178,6 +193,7 @@ static uint16_t read_input(uint16_t address)
     case MB_IR_UPTIME_HI:    return (uint16_t)(((HAL_GetTick() / 1000u) >> 16u) & 0xFFFFu);
     case MB_IR_MODULE_ID:    return MODULE_ID_04RTD;
     case MB_IR_TEMPERATURE:  return (uint16_t)temp_module_read_decicelsius();
+    case MB_IR_CAL_LOCK:     return calstore_lock_mask();
     default:                 return 0u;
     }
 }
@@ -195,6 +211,7 @@ static bool input_address_valid(uint16_t address)
     case MB_IR_UPTIME_HI:
     case MB_IR_MODULE_ID:
     case MB_IR_TEMPERATURE:
+    case MB_IR_CAL_LOCK:
         return true;
     default:
         return false;
@@ -218,8 +235,7 @@ static uint16_t read_holding(uint16_t address)
         }
     }
     if (in_rtd_cal(address, &ch, &slot, &word)) {
-        const float* p = cal_float_ptr(s, ch, slot);
-        return (p != NULL) ? float_word(*p, word) : 0u;
+        return float_word(calstore_get_coeff(ch, slot), word);
     }
     if (in_rref(address, &range, &word)) {
         return float_word(s->rref_nominal[range], word);
@@ -250,7 +266,9 @@ static uint16_t read_holding(uint16_t address)
 
     case MB_HR_TRIG_SAVE:
     case MB_HR_TRIG_REBOOT:
-    case MB_HR_TRIG_FACTORY_RESET: return 0u;
+    case MB_HR_TRIG_FACTORY_RESET:
+    case MB_HR_CAL_COMMIT:
+    case MB_HR_CAL_ERASE_ARM:      return 0u;
 
     case MB_HR_TEMPERATURE:       return (uint16_t)temp_module_read_decicelsius();
 
@@ -296,9 +314,14 @@ static nmbs_error apply_holding_write(uint16_t address, uint16_t value)
     }
 
     if (in_rtd_cal(address, &ch, &slot, &word)) {
-        float* p = cal_float_ptr(s, ch, slot);
-        if (p == NULL) { return NMBS_EXCEPTION_ILLEGAL_DATA_ADDRESS; }
-        *p = float_set_word(*p, word, value);
+        /* Write-once: reject any change to an already committed slot. */
+        if (calstore_is_locked(ch, (uint8_t)(slot >> 1))) {
+            return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE;
+        }
+        const float patched = float_set_word(calstore_get_coeff(ch, slot), word, value);
+        if (!calstore_set_coeff(ch, slot, patched)) {
+            return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE;
+        }
         return NMBS_ERROR_NONE;
     }
 
@@ -371,6 +394,34 @@ static nmbs_error apply_holding_write(uint16_t address, uint16_t value)
         else if (value != 0u) { return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE; }
         break;
 
+    case MB_HR_CAL_COMMIT: {
+        if ((value & ~MB_CAL_COMMIT_SLOT_MASK) != MB_CAL_COMMIT_BASE) {
+            return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE;
+        }
+        const uint8_t sel = (uint8_t)(value & MB_CAL_COMMIT_SLOT_MASK); /* ch*2+range */
+        const uint8_t cch = (uint8_t)(sel / SETTINGS_RTD_RANGES);
+        const uint8_t rng = (uint8_t)(sel % SETTINGS_RTD_RANGES);
+        if (cch >= SETTINGS_RTD_CHANNELS) {
+            return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE;
+        }
+        /* One-shot: fails if already locked or on Flash error. */
+        if (!calstore_commit(cch, rng)) {
+            return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE;
+        }
+        break;
+    }
+
+    case MB_HR_CAL_ERASE_ARM:
+        if (value == MODBUS_TRIG_CAL_ERASE_ARM) {
+            s_cal_erase_arm_tick = HAL_GetTick();
+            s_cal_erase_armed    = 1u;
+        } else if (value == 0u) {
+            s_cal_erase_armed    = 0u;   /* explicit disarm */
+        } else {
+            return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE;
+        }
+        break;
+
     default:
         return NMBS_EXCEPTION_ILLEGAL_DATA_ADDRESS;
     }
@@ -388,6 +439,7 @@ static bool holding_address_valid(uint16_t address)
     if (address >= MB_HR_RTD_SCAN_MS && address <= MB_HR_USE_DHCP) { return true; }
     if (address == MB_HR_TRIG_SAVE || address == MB_HR_TRIG_REBOOT ||
         address == MB_HR_TRIG_FACTORY_RESET) { return true; }
+    if (address == MB_HR_CAL_COMMIT || address == MB_HR_CAL_ERASE_ARM) { return true; }
     if (address == MB_HR_TEMPERATURE) { return true; }
     return false;
 }

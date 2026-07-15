@@ -91,11 +91,6 @@ void settings_reset_to_defaults(void)
         s_settings.reserved_a[ch]     = 0u;
         s_settings.ch_custom_w100[ch] =
             rtd_type_default_w100_x10000(SETTINGS_DEF_CH_TYPE);
-
-        for (uint8_t r = 0; r < SETTINGS_RTD_RANGES; r++) {
-            s_settings.cal_gain[ch][r]   = 1.0f;
-            s_settings.cal_offset[ch][r] = 0.0f;
-        }
     }
 
     s_settings.rref_nominal[RTD_RANGE_LOW]  = SETTINGS_DEF_RREF_LOW;

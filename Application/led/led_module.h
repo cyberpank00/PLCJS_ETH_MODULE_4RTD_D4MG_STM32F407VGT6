@@ -42,6 +42,7 @@ typedef enum {
     LED_STATE_POLLING        = 1,
     LED_STATE_FACTORY_RESET  = 2,
     LED_STATE_NO_LINK        = 3,
+    LED_STATE_CAL_ARMED      = 4,   /* emergency cal-erase armed: fast blink train */
 } led_state_t;
 
 /** Initialise the LED module with a given mode (see settings.h). */
@@ -63,6 +64,13 @@ void led_module_set_state(led_state_t state);
  * led_module_set_factory_reset_timing() before calling this if needed.
  */
 void led_module_signal_factory_reset(void);
+
+/**
+ * Enter a sticky fast blink used to confirm an emergency calibration erase
+ * just before the reboot. Like the factory-reset indicator, it overrides the
+ * current mode/state until the next boot.
+ */
+void led_module_signal_cal_erase(void);
 
 /**
  * Configure the LED_STATE_FACTORY_RESET ON / OFF times, milliseconds.
