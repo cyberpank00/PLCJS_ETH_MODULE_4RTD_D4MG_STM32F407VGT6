@@ -49,9 +49,9 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # HW_REVISION encoding: (major << 8) | minor  →  e.g. hw:01.02 = 0x0102
 # FW_VERSION  encoding: (major << 8) | minor  →  e.g. fw:01.02 = 0x0102
 # OTA acceptance: product_id exact match + hw_revision major byte match.
-set(PRODUCT_ID    "0x504C0403" CACHE STRING "Product ID embedded in fw_header_t (0x504C=PL, 4ch, RTD)" FORCE)
-set(HW_REVISION   "0x0101"     CACHE STRING "HW revision (major<<8|minor), e.g. hw:01.01 = 0x0101" FORCE)
-set(FW_VERSION    "0x0101"     CACHE STRING "FW version  (major<<8|minor), e.g. fw:01.01 = 0x0101" FORCE)
+# Identity now lives in Application/fw_header/fw_header.h (single source of
+# truth). Override at build time with -DFW_PRODUCT_ID / -DFW_HW_REVISION /
+# -DFW_VERSION_VALUE if ever needed.
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
@@ -99,12 +99,8 @@ target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
     NMBS_CLIENT_DISABLED=1
 )
 
-# Add project symbols (macros) -- firmware header identity fields.
-target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE
-    FW_PRODUCT_ID=${PRODUCT_ID}
-    FW_HW_REVISION=${HW_REVISION}
-    FW_VERSION_VALUE=${FW_VERSION}
-)
+# Firmware-header identity (product_id / hw_revision / fw_version) is defined
+# in Application/fw_header/fw_header.h; no CMake-passed identity defines needed.
 
 # Remove wrong libob.a library dependency when using cpp files
 list(REMOVE_ITEM CMAKE_C_IMPLICIT_LINK_LIBRARIES ob)
