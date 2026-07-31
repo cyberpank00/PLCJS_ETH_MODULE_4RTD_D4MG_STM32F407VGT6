@@ -16,6 +16,7 @@
 #include "lwip/api.h"
 #include "lwip/dhcp.h"
 #include "lwip/netif.h"
+#include "lwip/tcpip.h"
 #include "main.h"
 #include "stm32f4xx_hal.h"
 
@@ -134,25 +135,54 @@ static void perform_cal_erase(void)
 /* ---------------------------------------------------------------------------
  * Network bring-up
  * ------------------------------------------------------------------------- */
+/* Bring the netif in line with the current settings. Idempotent: it only
+ * touches the interface when the desired mode/address differs from the live
+ * state, so it is safe to call both at boot and live after a settings change
+ * (change IP / DHCP without a reboot). MUST run in the tcpip thread context
+ * (called directly at boot before heavy traffic, and via tcpip_callback() for
+ * the live path). */
 static void apply_network_config(void)
 {
     const settings_t* s = settings_get();
 
     if (s->use_dhcp) {
-        /* MX_LWIP_Init() already started DHCP. Nothing more to do. */
+        /* Already on DHCP (lease running or in progress) → nothing to do. */
+        if (netif_dhcp_data(&gnetif) != NULL) {
+            return;
+        }
+        /* Switch static → DHCP: clear the static address and start DHCP. */
+        ip4_addr_t any;
+        ip4_addr_set_zero(&any);
+        netif_set_addr(&gnetif, &any, &any, &any);
+        dhcp_start(&gnetif);
         return;
     }
 
-    /* Static configuration: stop DHCP if it happens to be running and load
-     * the static address. */
-    dhcp_release_and_stop(&gnetif);
-
+    /* Static configuration. */
     ip4_addr_t ip, mask, gw;
     IP4_ADDR(&ip,   s->ip[0],      s->ip[1],      s->ip[2],      s->ip[3]);
     IP4_ADDR(&mask, s->netmask[0], s->netmask[1], s->netmask[2], s->netmask[3]);
     IP4_ADDR(&gw,   s->gateway[0], s->gateway[1], s->gateway[2], s->gateway[3]);
 
+    /* Already static with exactly this address → nothing to do (avoids
+     * needless churn when an unrelated setting is saved). */
+    if (netif_dhcp_data(&gnetif) == NULL &&
+        ip4_addr_cmp(netif_ip4_addr(&gnetif), &ip) &&
+        ip4_addr_cmp(netif_ip4_netmask(&gnetif), &mask) &&
+        ip4_addr_cmp(netif_ip4_gw(&gnetif), &gw)) {
+        return;
+    }
+
+    /* Stop DHCP if it happens to be running, then load the static address. */
+    dhcp_release_and_stop(&gnetif);
     netif_set_addr(&gnetif, &ip, &mask, &gw);
+}
+
+/* tcpip_callback() trampoline so the live re-apply runs in the tcpip thread. */
+static void apply_network_config_tcpip(void* arg)
+{
+    (void)arg;
+    apply_network_config();
 }
 
 /* ---------------------------------------------------------------------------
@@ -265,6 +295,10 @@ void app_run(void)
         if (modbus_app_take_pending_save()) {
             HAL_IWDG_Refresh(&hiwdg);
             settings_save();
+            /* Apply network settings live so an IP / DHCP change takes effect
+             * immediately, without a reboot. Runs in the tcpip thread for
+             * LwIP thread-safety; a no-op if the address is unchanged. */
+            tcpip_callback(apply_network_config_tcpip, NULL);
         }
         if (modbus_app_take_pending_factory_reset()) {
             perform_factory_reset();
