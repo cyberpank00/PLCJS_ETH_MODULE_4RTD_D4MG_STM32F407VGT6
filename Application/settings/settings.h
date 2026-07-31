@@ -35,12 +35,12 @@ extern "C" {
 #define SETTINGS_DEF_SLAVE_ID       1u
 #define SETTINGS_DEF_TCP_PORT       502u
 
-#define SETTINGS_DEF_USE_DHCP       1u
+#define SETTINGS_DEF_USE_DHCP       0u
 
 #define SETTINGS_DEF_IP0            192u
 #define SETTINGS_DEF_IP1            168u
-#define SETTINGS_DEF_IP2            142u
-#define SETTINGS_DEF_IP3            150u
+#define SETTINGS_DEF_IP2            1u
+#define SETTINGS_DEF_IP3            10u
 
 #define SETTINGS_DEF_MASK0          255u
 #define SETTINGS_DEF_MASK1          255u
@@ -49,7 +49,7 @@ extern "C" {
 
 #define SETTINGS_DEF_GW0            192u
 #define SETTINGS_DEF_GW1            168u
-#define SETTINGS_DEF_GW2            142u
+#define SETTINGS_DEF_GW2            1u
 #define SETTINGS_DEF_GW3            1u
 
 /* Per-channel RTD defaults. */
