@@ -3,9 +3,11 @@
   * @file    modbus_tcp_server.c
   * @brief   Single-client Modbus TCP server task on top of LwIP netconn.
   *
-  * The implementation is intentionally simple: at any time at most one TCP
-  * client is served. Additional incoming connections are immediately closed,
-  * matching how typical single-channel Modbus slaves behave.
+  * At most one TCP client is served at a time. The listener is polled
+  * non-blocking so a newly arriving connection preempts the current one
+  * (newest-wins): this frees the single slot immediately when a master
+  * reconnects after a cable pull / switch reboot, instead of waiting for the
+  * stale half-open connection to time out. Link-down also drops the client.
   ******************************************************************************
   */
 
@@ -36,9 +38,16 @@ extern volatile uint8_t g_eth_any_link_up;
 #define MB_KEEPALIVE_INTVL_MS    2000u  /*  2 s between probes           */
 #define MB_KEEPALIVE_CNT            3u  /*  3 probes → dead after ~16 s  */
 
-/* Max consecutive read-timeouts before we drop the connection (safety net
- * in case TCP keep-alive cannot detect the failure). */
-#define MB_MAX_IDLE_TIMEOUTS        6u  /* 6 × 5 s = 30 s */
+/* Poll timing: the read timeout bounds how long a single server poll waits
+ * for a new request to begin, so the accept loop can preempt with a newer
+ * client (newest-wins) within this interval. The byte timeout bounds the gap
+ * between bytes once a frame has started. */
+#define MB_READ_TIMEOUT_MS        300u
+#define MB_BYTE_TIMEOUT_MS       1000u
+
+/* Drop a connected-but-silent client after this long with no valid request,
+ * freeing the single slot (safety net alongside TCP keep-alive). */
+#define MB_IDLE_DROP_MS         30000u
 
 typedef struct {
     struct netconn* conn;
@@ -128,77 +137,65 @@ static void mb_sleep(uint32_t ms, void* arg)
 }
 
 /* ---------------------------------------------------------------------------
- * Per-connection handler
+ * Active-client lifecycle helpers
  * ------------------------------------------------------------------------- */
-static void handle_client(struct netconn* newconn)
+
+/* Close and free the active client connection and release its RX buffer. */
+static void client_close(struct netconn** conn, mb_io_t* io)
 {
-    /* Enable TCP keep-alive so a cable-pull is detected within ~16 s. */
-    ip_set_option(newconn->pcb.tcp, SOF_KEEPALIVE);
-    newconn->pcb.tcp->keep_idle  = MB_KEEPALIVE_IDLE_MS;
-    newconn->pcb.tcp->keep_intvl = MB_KEEPALIVE_INTVL_MS;
-    newconn->pcb.tcp->keep_cnt   = MB_KEEPALIVE_CNT;
-
-    mb_io_t io = {
-        .conn       = newconn,
-        .inbuf      = NULL,
-        .inbuf_data = NULL,
-        .inbuf_len  = 0,
-        .inbuf_pos  = 0,
-        .txbuf_len  = 0,
-    };
-
-    nmbs_platform_conf platform = {
-        .transport  = NMBS_TRANSPORT_TCP,
-        .read_byte  = mb_read_byte,
-        .write_byte = mb_write_byte,
-        .sleep      = mb_sleep,
-        .arg        = &io,
-    };
-
-    nmbs_t mb;
-    if (nmbs_server_create(&mb, settings_get()->modbus_slave_id,
-                           &platform, modbus_app_get_callbacks()) != NMBS_ERROR_NONE) {
-        return;
+    if (io->inbuf != NULL) {
+        netbuf_delete(io->inbuf);
+        io->inbuf      = NULL;
+        io->inbuf_data = NULL;
+        io->inbuf_len  = 0;
+        io->inbuf_pos  = 0;
     }
-
-    /* nmbs_server_poll() returns once it has handled (or failed to handle)
-     * a single request. We keep going until the connection drops. */
-    nmbs_set_read_timeout(&mb, 5000);
-    nmbs_set_byte_timeout(&mb, 1000);
-
-    s_client_connected = 1u;
-
-    uint32_t idle_timeouts = 0u;
-
-    for (;;) {
-        io.txbuf_len = 0u;  /* reset TX buffer before each poll */
-        const nmbs_error e = nmbs_server_poll(&mb);
-        if (e == NMBS_ERROR_NONE) {
-            mb_flush(&io);   /* send complete response in one TCP segment */
-            modbus_app_notify_request();
-            idle_timeouts = 0u;
-            continue;
-        }
-        if (e == NMBS_ERROR_TIMEOUT) {
-            idle_timeouts++;
-            if (idle_timeouts >= MB_MAX_IDLE_TIMEOUTS || !g_eth_any_link_up) {
-                break;  /* 30 s idle → force-close stale connection */
-            }
-            continue;
-        }
-        /* Transport error or anything else: the connection is gone. */
-        break;
+    if (*conn != NULL) {
+        netconn_close(*conn);
+        netconn_delete(*conn);
+        *conn = NULL;
     }
-
     s_client_connected = 0u;
+}
 
-    if (io.inbuf != NULL) {
-        netbuf_delete(io.inbuf);
+/* Configure keep-alive and build the nanoMODBUS server context for a freshly
+ * accepted client. Returns false if the server context could not be created. */
+static bool client_setup(struct netconn* conn, mb_io_t* io, nmbs_t* mb)
+{
+    /* Enable TCP keep-alive so a cable-pull is also detected at the stack
+     * level (~16 s) even if the peer never reconnects. */
+    ip_set_option(conn->pcb.tcp, SOF_KEEPALIVE);
+    conn->pcb.tcp->keep_idle  = MB_KEEPALIVE_IDLE_MS;
+    conn->pcb.tcp->keep_intvl = MB_KEEPALIVE_INTVL_MS;
+    conn->pcb.tcp->keep_cnt   = MB_KEEPALIVE_CNT;
+
+    memset(io, 0, sizeof(*io));
+    io->conn = conn;
+
+    /* Static so the conf outlives this call regardless of whether nanoMODBUS
+     * copies it or keeps the pointer. arg points at the persistent io. */
+    static nmbs_platform_conf platform;
+    platform.transport  = NMBS_TRANSPORT_TCP;
+    platform.read_byte  = mb_read_byte;
+    platform.write_byte = mb_write_byte;
+    platform.sleep      = mb_sleep;
+    platform.arg        = io;
+
+    if (nmbs_server_create(mb, settings_get()->modbus_slave_id,
+                           &platform, modbus_app_get_callbacks()) != NMBS_ERROR_NONE) {
+        return false;
     }
+    nmbs_set_read_timeout(mb, MB_READ_TIMEOUT_MS);
+    nmbs_set_byte_timeout(mb, MB_BYTE_TIMEOUT_MS);
+    return true;
 }
 
 /* ---------------------------------------------------------------------------
  * Server task entry point
+ *
+ * Single loop, non-blocking accept: newly arriving connections preempt the
+ * current client (newest-wins) so the one slot is freed immediately when a
+ * master reconnects, and a reconnect storm cannot pile up in the backlog.
  * ------------------------------------------------------------------------- */
 static void modbus_tcp_server_thread(void* arg)
 {
@@ -216,16 +213,61 @@ static void modbus_tcp_server_thread(void* arg)
     }
 
     netconn_listen(listener);
+    /* Accept must never block the loop; we poll it every iteration. */
+    netconn_set_nonblocking(listener, 1);
+
+    struct netconn* active = NULL;
+    mb_io_t         io      = { .conn = NULL };
+    nmbs_t          mb;
+    uint32_t        last_activity = 0u;
 
     for (;;) {
-        struct netconn* newconn = NULL;
-        if (netconn_accept(listener, &newconn) != ERR_OK || newconn == NULL) {
-            osDelay(10);
-            continue;
+        /* 1. Drain the backlog, keeping only the NEWEST pending connection and
+         *    closing any older queued ones (prevents reconnect-storm pile-up). */
+        struct netconn* incoming = NULL;
+        struct netconn* newest   = NULL;
+        while (netconn_accept(listener, &incoming) == ERR_OK && incoming != NULL) {
+            if (newest != NULL) {
+                netconn_close(newest);
+                netconn_delete(newest);
+            }
+            newest   = incoming;
+            incoming = NULL;
         }
-        handle_client(newconn);
-        netconn_close(newconn);
-        netconn_delete(newconn);
+        if (newest != NULL) {
+            client_close(&active, &io);            /* preempt the current client */
+            if (client_setup(newest, &io, &mb)) {
+                active         = newest;
+                s_client_connected = 1u;
+                last_activity  = osKernelGetTickCount();
+            } else {
+                netconn_close(newest);
+                netconn_delete(newest);
+            }
+        }
+
+        /* 2. Service the active client with one short, bounded poll. */
+        if (active != NULL) {
+            if (!g_eth_any_link_up) {
+                client_close(&active, &io);        /* link down → free the slot */
+                continue;
+            }
+            io.txbuf_len = 0u;
+            const nmbs_error e = nmbs_server_poll(&mb);
+            if (e == NMBS_ERROR_NONE) {
+                mb_flush(&io);                     /* one TCP segment per response */
+                modbus_app_notify_request();
+                last_activity = osKernelGetTickCount();
+            } else if (e == NMBS_ERROR_TIMEOUT) {
+                if ((osKernelGetTickCount() - last_activity) >= MB_IDLE_DROP_MS) {
+                    client_close(&active, &io);    /* silent peer → free the slot */
+                }
+            } else {
+                client_close(&active, &io);        /* transport error → peer gone */
+            }
+        } else {
+            osDelay(5);
+        }
     }
 }
 

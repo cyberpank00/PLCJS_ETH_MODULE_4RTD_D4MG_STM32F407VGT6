@@ -51,7 +51,7 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # OTA acceptance: product_id exact match + hw_revision major byte match.
 set(PRODUCT_ID    "0x504C0403" CACHE STRING "Product ID embedded in fw_header_t (0x504C=PL, 4ch, RTD)" FORCE)
 set(HW_REVISION   "0x0101"     CACHE STRING "HW revision (major<<8|minor), e.g. hw:01.01 = 0x0101" FORCE)
-set(FW_VERSION    "0x0100"     CACHE STRING "FW version  (major<<8|minor), e.g. fw:01.00 = 0x0100" FORCE)
+set(FW_VERSION    "0x0101"     CACHE STRING "FW version  (major<<8|minor), e.g. fw:01.01 = 0x0101" FORCE)
 
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
