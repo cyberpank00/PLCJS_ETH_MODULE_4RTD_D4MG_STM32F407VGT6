@@ -83,6 +83,14 @@ void led_module_set_factory_reset_timing(uint16_t on_ms, uint16_t off_ms);
 void led_module_get_factory_reset_timing(uint16_t *on_ms, uint16_t *off_ms);
 
 /**
+ * Blink the STAT_LED rapidly for @p ms milliseconds to physically locate the
+ * device (discovery "flash LED", like TIA Portal). Overrides the normal state
+ * pattern for the duration, then resumes. Ignored while FACTORY_RESET is active
+ * (that indicator has priority).
+ */
+void led_module_signal_identify(uint32_t ms);
+
+/**
  * Periodic tick — call from a single task with a fixed period. The default
  * tick used in the application is 10 ms; the module timing is expressed in
  * ticks so other periods are usable as long as `tick_ms` is passed.

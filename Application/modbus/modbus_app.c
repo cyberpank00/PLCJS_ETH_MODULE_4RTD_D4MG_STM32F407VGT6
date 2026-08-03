@@ -378,7 +378,8 @@ static nmbs_error apply_holding_write(uint16_t address, uint16_t value)
         break;
 
     case MB_HR_USE_DHCP:
-        if (value > 1u) { return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE; }
+        /* Network mode: 0=static, 1=DHCP, 2=link-local (see NET_MODE_* in settings.h). */
+        if (value > NET_MODE_LINKLOCAL) { return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE; }
         s->use_dhcp = (uint8_t)value;
         break;
 

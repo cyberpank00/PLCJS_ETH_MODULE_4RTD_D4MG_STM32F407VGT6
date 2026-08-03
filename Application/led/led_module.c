@@ -64,6 +64,12 @@ static uint16_t s_freset_off_ms   = LED_FRESET_DEFAULT_OFF_MS;
 static uint16_t s_freset_timer_ms = 0u;
 static uint8_t  s_freset_on_phase = 0u;
 
+/* "Identify" (discovery flash-LED): rapid blink for a bounded duration. */
+#define LED_IDENTIFY_HALF_MS   100u
+static uint32_t s_identify_remaining_ms = 0u;
+static uint16_t s_identify_timer_ms     = 0u;
+static uint8_t  s_identify_on_phase     = 0u;
+
 /* ---------------------------------------------------------------------------
  * Helpers
  * ------------------------------------------------------------------------- */
@@ -190,6 +196,17 @@ void led_module_signal_cal_erase(void)
     led_module_signal_factory_reset();
 }
 
+void led_module_signal_identify(uint32_t ms)
+{
+    if (s_state == LED_STATE_FACTORY_RESET) {
+        return; /* factory-reset indicator has priority */
+    }
+    s_identify_remaining_ms = ms;
+    s_identify_timer_ms     = 0u;
+    s_identify_on_phase     = 1u;
+    led_set(true);
+}
+
 void led_module_set_factory_reset_timing(uint16_t on_ms, uint16_t off_ms)
 {
     if (on_ms  < LED_FRESET_MIN_MS) on_ms  = LED_FRESET_MIN_MS;
@@ -220,6 +237,26 @@ void led_module_tick(uint16_t tick_ms)
             s_freset_on_phase  = (uint8_t)(!s_freset_on_phase);
             s_freset_timer_ms  = 0u;
             led_set(s_freset_on_phase != 0u);
+        }
+        return;
+    }
+
+    /* Identify (discovery flash-LED) overrides the normal indication for its
+     * bounded duration, then resumes whatever the mode/state dictates. */
+    if (s_identify_remaining_ms > 0u) {
+        if (s_identify_remaining_ms <= tick_ms) {
+            s_identify_remaining_ms = 0u;
+            if (s_mode == LED_MODE_ALW_ON)       { led_set(true); }
+            else if (s_mode == LED_MODE_ALW_OFF) { led_set(false); }
+            else                                 { led_load_pattern(s_state); }
+            return;
+        }
+        s_identify_remaining_ms -= tick_ms;
+        s_identify_timer_ms = (uint16_t)(s_identify_timer_ms + tick_ms);
+        if (s_identify_timer_ms >= LED_IDENTIFY_HALF_MS) {
+            s_identify_timer_ms = 0u;
+            s_identify_on_phase = (uint8_t)(!s_identify_on_phase);
+            led_set(s_identify_on_phase != 0u);
         }
         return;
     }

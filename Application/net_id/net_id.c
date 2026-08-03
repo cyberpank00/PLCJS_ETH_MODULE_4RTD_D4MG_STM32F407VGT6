@@ -42,3 +42,21 @@ void net_id_get_mac(uint8_t mac[6])
     mac[4] = (uint8_t)(h >> 8);
     mac[5] = (uint8_t)(h);
 }
+
+void net_id_get_linklocal(uint8_t ip[4])
+{
+    uint8_t mac[6];
+    net_id_get_mac(mac);
+
+    uint8_t x = mac[4];
+    uint8_t y = mac[5];
+    if (x == 0u)   { x = 1u; }
+    if (x == 255u) { x = 254u; }
+    if (y == 0u)   { y = 1u; }
+    if (y == 255u) { y = 254u; }
+
+    ip[0] = 169u;
+    ip[1] = 254u;
+    ip[2] = x;
+    ip[3] = y;
+}

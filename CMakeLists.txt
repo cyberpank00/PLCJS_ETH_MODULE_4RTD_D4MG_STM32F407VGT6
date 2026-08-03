@@ -62,6 +62,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Application/button/button_module.c
     Application/ksz8863/ksz8863.c
     Application/net_id/net_id.c
+    Application/discovery/discovery.c
     Application/settings/settings.c
     Application/calstore/calstore.c
     Application/modbus/modbus_app.c
@@ -84,6 +85,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Application/button
     Application/ksz8863
     Application/net_id
+    Application/discovery
     Application/settings
     Application/calstore
     Application/modbus

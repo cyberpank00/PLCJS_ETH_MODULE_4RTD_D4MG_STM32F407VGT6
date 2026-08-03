@@ -26,6 +26,18 @@ extern "C" {
  */
 void net_id_get_mac(uint8_t mac[6]);
 
+/**
+ * Fill @p ip (4 bytes) with a deterministic IPv4 link-local address
+ * (RFC 3927, 169.254.0.0/16) derived from the same UID hash as the MAC:
+ * 169.254.<mac[4]>.<mac[5]>, with each host octet clamped to 1..254 to avoid
+ * the reserved 169.254.0.x / 169.254.255.x ranges.
+ *
+ * Deterministic (no AutoIP re-selection) so the address can be printed on the
+ * device label and reached by a plain Modbus client. Used as the factory /
+ * "unconfigured" network state.
+ */
+void net_id_get_linklocal(uint8_t ip[4]);
+
 #ifdef __cplusplus
 }
 #endif
