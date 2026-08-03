@@ -260,9 +260,9 @@ STM32_Programmer_CLI -c port=SWD -w build/Debug/PLCJS_ETH_MODULE_4RTD_D4MG_STM32
 | Параметр | Значение |
 |---|---|
 | DHCP | `1` (включен) |
-| Static IP | `192.168.142.150` |
+| Static IP | `192.168.1.10` |
 | Netmask | `255.255.255.0` |
-| Gateway | `192.168.142.1` |
+| Gateway | `192.168.1.1` |
 | Modbus TCP порт | `502` |
 | Modbus unit id | `1` |
 
@@ -275,7 +275,7 @@ STM32_Programmer_CLI -c port=SWD -w build/Debug/PLCJS_ETH_MODULE_4RTD_D4MG_STM32
 [tools/README.md](tools/README.md).
 
 ```powershell
-node tools/calibrate.mjs status --ip 192.168.142.150
+node tools/calibrate.mjs status --ip 192.168.1.10
 node tools/calibrate.mjs calibrate --ch 0
 python tools/calibrate.py set --ch 0 --type Pt100 --enable 1
 ```
