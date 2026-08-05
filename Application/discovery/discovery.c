@@ -147,9 +147,11 @@ static void pdp_recv(void* arg, struct udp_pcb* pcb, struct pbuf* p,
         memcpy(&r[10], &ip, 4);
         memcpy(&r[14], &mk, 4);
         memcpy(&r[18], &gw, 4);
-        memcpy(&r[22], s->name, SETTINGS_NAME_LEN);
-        pdp_send((uint8_t)(PDP_OP_IDENTIFY | PDP_RESP_FLAG), txid,
-                 r, (uint16_t)(22u + SETTINGS_NAME_LEN));
+        /* Emit a fixed 16-byte name field on the wire (zero-padded) regardless
+         * of the per-variant SETTINGS_NAME_LEN, so every module returns an
+         * identical 38-byte IDENTIFY payload the tools parse uniformly. */
+        memcpy(&r[22], s->name, (SETTINGS_NAME_LEN < 16u) ? SETTINGS_NAME_LEN : 16u);
+        pdp_send((uint8_t)(PDP_OP_IDENTIFY | PDP_RESP_FLAG), txid, r, 22u + 16u);
         break;
     }
     case PDP_OP_SET_NET: {
