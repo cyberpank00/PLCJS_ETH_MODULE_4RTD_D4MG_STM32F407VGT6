@@ -179,7 +179,7 @@ module id (`0x04D1`), `126` температура MCU (signed 0.1 °C), `127` �
 | 101 | режим LED (0/1/2) |
 | 102 | Modbus slave id | 103 | Modbus TCP порт |
 | 104..107 | static IP | 108..111 | netmask | 112..115 | gateway |
-| 116 | use DHCP (0/1) |
+| 116 | net mode: `0` static / `1` DHCP / `2` link-local (default `2`) |
 | 117 | SAVE (`0xA5A5`) | 118 | REBOOT (`0xB00B`) / BOOTLOADER (`0xB007`) |
 | 119 | FACTORY RESET (`0xDEAD`) | 130 | температура MCU (RO) |
 | 131 | CAL COMMIT (`0xCA00 \| slot`, slot 0..7) — фиксация калибровки |
@@ -259,14 +259,13 @@ STM32_Programmer_CLI -c port=SWD -w build/Debug/PLCJS_ETH_MODULE_4RTD_D4MG_STM32
 
 | Параметр | Значение |
 |---|---|
-| DHCP | `1` (включен) |
-| Static IP | `192.168.1.10` |
-| Netmask | `255.255.255.0` |
-| Gateway | `192.168.1.1` |
+| Сетевой режим (`USE_DHCP`) | `2` = link-local (заводской) |
+| Заводской адрес | `169.254.<mac[4]>.<mac[5]>` /16, из UID |
+| Резервные static-поля | IP `192.168.1.10`, маска `255.255.255.0`, шлюз `192.168.1.1` |
 | Modbus TCP порт | `502` |
 | Modbus unit id | `1` |
 
-Изменения сети применяются после `TRIG_SAVE` + `TRIG_REBOOT`.
+Из коробки — AutoIP link-local `169.254.x.y` (находится по MAC через discovery, вкладка «Обнаружение» в ModbusTool, UDP-broadcast порт `20556`). Адрес наклейки: `node tools/device_id.mjs --stlink --variant 4rtd` (в репозитории загрузчика). `USE_DHCP`: `0` static / `1` DHCP / `2` link-local; изменения применяются на лету после `TRIG_SAVE`.
 
 ## Инструменты
 
