@@ -4,7 +4,7 @@
 			"path": "."
 		},
 		{
-			"path": "../BOOTLOADER_PLCJS_ETH_MODULE_12DI_D4MG_STM32F407VGT6"
+			"path": "../BOOTLOADER_PLCJS_ETH_MODULE_STM32F407VGT6"
 		}
 	],
 	"settings": {

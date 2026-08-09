@@ -231,7 +231,7 @@ Sibling repos under `E:\STM_Programming\`:
 | `PLCJS_ETH_MODULE_4RTD_D4MG_...` | This module — `0x504C0403` / IR125 `0x04D1`. |
 | `PLCJS_ETH_MODULE_12DI_D4MG_...` | 12 discrete inputs, `0x504C1201` / `0x12D1`. This repo's ancestor; shared subsystems originate there. |
 | `PLCJS_ETH_MODULE_12DQ_D4MG_...` | 12 discrete outputs, `0x504C1202` / `0x12D0`. |
-| `BOOTLOADER_PLCJS_ETH_MODULE_12DI_D4MG_...` | Shared bootloader (serves every variant despite the name). Owns `flash_map.h`, `app_validate.h`, `scripts/variants.csv`. |
+| `BOOTLOADER_PLCJS_ETH_MODULE_STM32F407VGT6` | Shared bootloader (serves every variant). Owns `flash_map.h`, `app_validate.h`, `scripts/variants.csv`. |
 | `PLCJS_Module_ModbusTool` | Qt6/C++17 desktop client. `build4RTD()` in `src/maps/ModuleMaps.cpp` mirrors this module's register map, including the `float32` rows. |
 
 **`Application/` subsystems are copy-pasted between firmware variants, not shared
@@ -247,3 +247,24 @@ Cross-repo contracts that must change in lockstep:
   `0x010101`; firmware headers use the 2-byte `0x0101`.
 - **Register map changes** — `modbus_app.h` here and `build4RTD()` in
   `ModuleMaps.cpp`, or the tool shows stale registers.
+
+## Maintaining this file
+
+`AGENTS.md` is a living document, not a one-time write. Update it **in the same
+commit** as the change it describes — a stale map is worse than no map, because
+it actively misleads. Touch it when:
+
+- an invariant, gotcha or threading rule is added or changes — especially the
+  calibration write-once / sector-11 rules, which are safety-critical;
+- a module is added, removed or repurposed (`Application/` map);
+- the build procedure, toolchain or linker contract changes;
+- a register-map change alters the header comment of `modbus_app.h`;
+- `FW_VERSION_VALUE` is bumped and the version-policy text needs the new
+  example value;
+- a cross-repo contract changes (PDP wire format, `fw_header_t`, flash map,
+  `product_id`) — update the *Multi-repo* section here **and** the corresponding
+  section in the sibling repo(s).
+
+Pure refactors with no behavioural change do not require an update, but when in
+doubt, update — the cost is a few lines of text, the cost of a stale invariant
+is a field bug.
