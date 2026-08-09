@@ -3,6 +3,7 @@ build/
 
 # IDE / editor
 .vscode/
+.cache/
 
 # Python
 __pycache__/
