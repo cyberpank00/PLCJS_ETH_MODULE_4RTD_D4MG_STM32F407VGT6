@@ -586,8 +586,14 @@ void ethernet_link_thread(void* argument)
 /* USER CODE BEGIN ETH link Thread core code for User BSP */
     /* Poll KSZ8863 external port link status every 100 ms. */
     ksz8863_link_status_t st1 = {0}, st2 = {0};
-    ksz8863_get_link(KSZ8863_PORT1, &st1);
-    ksz8863_get_link(KSZ8863_PORT2, &st2);
+    bool smi_ok1 = ksz8863_get_link(KSZ8863_PORT1, &st1);
+    bool smi_ok2 = ksz8863_get_link(KSZ8863_PORT2, &st2);
+
+    /* Switch health service: executes an operator-requested recovery reset
+     * and a rate-limited automatic one when SMI stays dead. Runs here so all
+     * SMI access is confined to this thread. */
+    ksz8863_service(smi_ok1 || smi_ok2);
+
     bool any_up = st1.link_up || st2.link_up;
 
     /* Update the instantaneous flag (used by Modbus server & LED). */

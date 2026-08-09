@@ -53,8 +53,52 @@ typedef struct {
 } ksz8863_link_status_t;
 
 /* Pulse ETHRST low briefly, then release and wait for the chip to be ready
- * for SMI access (~20 ms total). MUST be called before MX_LWIP_Init(). */
+ * for SMI access (~20 ms total). Interrupts pass-through traffic between the
+ * external ports for the duration of the reset + auto-negotiation, so it is
+ * reserved for cold boot and explicit recovery — see ksz8863_boot_init() and
+ * ksz8863_service(). */
 void ksz8863_hw_reset(void);
+
+/* Boot-time reset policy. Call once early at boot (before MX_LWIP_Init()).
+ *
+ * The switch forwards traffic between ports 1 and 2 autonomously, so a warm
+ * MCU reboot (software reset, IWDG, NRST pin) must NOT reset it — the module
+ * acts as a pass-through switch and a reset would drop the link on both
+ * external ports for seconds (auto-negotiation). ETHRST stays high through
+ * the reboot: the board pull-up covers the MCU reset window and
+ * MX_GPIO_Init() initialises the pin to high.
+ *
+ * Only a cold boot (power-on / brown-out) performs a defensive hardware
+ * reset: the chip has just powered up and no traffic exists yet.
+ *
+ * Consumes (clears) the RCC reset-cause flags. */
+void ksz8863_boot_init(void);
+
+/* Make sure switch port 3 (STM32 MAC) is in RMII mode: Global Control 4,
+ * bit 6. Idempotent — reads first and writes only when the bit is clear.
+ * Requires SMI (HAL_ETH_Init() done). */
+void ksz8863_ensure_rmii_port3(void);
+
+/* Request an operator-driven recovery reset of the switch. Safe to call from
+ * any task (only sets a flag); the reset itself is executed by
+ * ksz8863_service() in the link-polling thread so that all SMI access stays
+ * on one thread. */
+void ksz8863_request_recovery(void);
+
+/* Periodic health service — call from the link-polling thread once per poll
+ * (~100 ms), passing whether SMI answered this cycle. Performs a hardware
+ * recovery reset when either:
+ *   - an operator requested one via ksz8863_request_recovery(), or
+ *   - SMI has been dead for KSZ8863_SMI_FAIL_POLLS_LIMIT consecutive polls
+ *     (rate-limited to one automatic reset per
+ *     KSZ8863_RECOVERY_MIN_INTERVAL_MS).
+ * Returns true when a reset was executed this call. */
+bool ksz8863_service(bool smi_ok);
+
+/* Consecutive failed polls (~100 ms each) before an automatic recovery. */
+#define KSZ8863_SMI_FAIL_POLLS_LIMIT      50u      /* ~5 s of dead SMI */
+/* Minimum spacing between automatic recovery resets. */
+#define KSZ8863_RECOVERY_MIN_INTERVAL_MS  30000u   /* 30 s */
 
 /* Read the standard PHY ID registers (MII reg 2 / 3) from port 1 and verify
  * that the OUI MSB matches the Micrel/Microchip OUI (0x0022). Returns true

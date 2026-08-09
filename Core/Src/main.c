@@ -25,7 +25,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "ksz8863.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -92,7 +92,11 @@ int main(void)
   MX_GPIO_Init();
   MX_IWDG_Init();
   /* USER CODE BEGIN 2 */
-
+  /* KSZ8863 boot policy: hardware-reset the switch only on a cold boot
+   * (power-on / brown-out). On warm reboots (soft reset, IWDG, NRST) the
+   * switch keeps forwarding pass-through traffic between its external ports
+   * and must not be disturbed. */
+  ksz8863_boot_init();
   /* USER CODE END 2 */
 
   /* Init scheduler */

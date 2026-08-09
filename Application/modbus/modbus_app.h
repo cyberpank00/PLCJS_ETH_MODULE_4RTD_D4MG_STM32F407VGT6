@@ -26,6 +26,7 @@
   *      104..107 static IP octets              108..111 netmask octets
   *      112..115 gateway octets                116 use DHCP (0/1)
   *      117 SAVE trigger (0xA5A5)              118 REBOOT (0xB00B) / BOOT (0xB007)
+  *                                                 / KSZ8863 reset (0x8863)
   *      119 FACTORY RESET trigger (0xDEAD)     130 on-chip temperature (RO)
   *      131 CAL COMMIT trigger (0xCA00|slot)   132 CAL ERASE ARM (0xC1A5)
   *    Per channel, base 500 + ch*10:
@@ -60,6 +61,11 @@ extern "C" {
 #define MODBUS_TRIG_REBOOT          0xB00Bu
 #define MODBUS_TRIG_FACTORY_RESET   0xDEADu
 #define MODBUS_TRIG_BOOTLOADER      0xB007u
+/* Hardware-reset the KSZ8863 Ethernet switch (operator recovery command).
+ * Written to MB_HR_TRIG_REBOOT (118). Interrupts pass-through traffic for
+ * the duration of the chip reset + port auto-negotiation — use only when the
+ * switch shows no signs of life. */
+#define MODBUS_TRIG_SWITCH_RESET    0x8863u
 
 /* Calibration commit: value = MB_CAL_COMMIT_BASE | (ch*2 + range), slot 0..7. */
 #define MB_CAL_COMMIT_BASE          0xCA00u

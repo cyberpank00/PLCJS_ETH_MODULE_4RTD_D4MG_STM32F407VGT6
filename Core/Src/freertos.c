@@ -26,7 +26,6 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "app.h"
-#include "ksz8863.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -115,10 +114,6 @@ void MX_FREERTOS_Init(void) {
 /* USER CODE END Header_StartDefaultTask */
 void StartDefaultTask(void *argument)
 {
-  /* Release KSZ8863 from hardware reset (ETHRST) BEFORE the MAC tries to
-   * talk to it over RMII / SMI. After this call the PHY is ready for SMI
-   * register access from HAL_ETH_Init(). */
-  ksz8863_hw_reset();
   /* init code for LWIP */
   MX_LWIP_Init();
   /* USER CODE BEGIN StartDefaultTask */

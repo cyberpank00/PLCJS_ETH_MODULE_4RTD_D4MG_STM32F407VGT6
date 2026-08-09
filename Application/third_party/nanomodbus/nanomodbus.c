@@ -314,14 +314,19 @@ static nmbs_error recv_msg_header(nmbs_t* nmbs, bool* first_byte_received) {
 
         nmbs->msg.transaction_id = get_2(nmbs);
         uint16_t protocol_id = get_2(nmbs);
-        uint16_t length = get_2(nmbs);    // We should actually check the length of the request against this value
+        uint16_t length = get_2(nmbs);
         nmbs->msg.unit_id = get_1(nmbs);
         nmbs->msg.fc = get_1(nmbs);
 
         if (protocol_id != 0)
             return NMBS_ERROR_TRANSPORT;
 
-        if (length > 255)
+        /* Security hardening: the MBAP length field counts unit_id + PDU. The
+         * only valid range is 2 (unit_id + fc, no data) .. 253 (unit_id + the
+         * maximum 252-byte PDU). Rejecting out-of-range lengths ensures a
+         * crafted frame can never announce a payload that would overrun the
+         * fixed message buffer. */
+        if (length < 2 || length > 253)
             return NMBS_ERROR_TRANSPORT;
     }
 
@@ -711,11 +716,22 @@ static nmbs_error handle_write_multiple_coils(nmbs_t* nmbs) {
 
     DEBUG("a %d\tq %d\tb %d\tcoils ", address, quantity, coils_bytes);
 
+    nmbs_bitfield coils;
+
+    /* Security: coils_bytes is an attacker-controlled wire value (0..255) and
+     * is used both to drive recv() and to index the local coils[] bitfield.
+     * Validate it BEFORE reading/copying — otherwise a crafted FC15 frame
+     * overflows msg.buf and/or coils[] before the quantity check below
+     * (stack-buffer-overflow / CVE-2026-29972 class). The count must fit both
+     * the local bitfield and the remaining message buffer. */
+    if (coils_bytes > sizeof(coils) ||
+        (uint32_t) nmbs->msg.buf_idx + coils_bytes > sizeof(nmbs->msg.buf))
+        return handle_exception(nmbs, NMBS_EXCEPTION_ILLEGAL_DATA_VALUE);
+
     err = recv(nmbs, coils_bytes);
     if (err != NMBS_ERROR_NONE)
         return err;
 
-    nmbs_bitfield coils;
     for (int i = 0; i < coils_bytes; i++) {
         coils[i] = get_1(nmbs);
         DEBUG("%d ", coils[i]);
@@ -781,11 +797,22 @@ static nmbs_error handle_write_multiple_registers(nmbs_t* nmbs) {
 
     DEBUG("a %d\tq %d\tb %d\tregs ", address, quantity, registers_bytes);
 
+    uint16_t registers[0x007B];
+
+    /* Security: registers_bytes is an attacker-controlled wire value (0..255)
+     * and is used both to drive recv() and to index the local registers[]
+     * array. Validate it BEFORE reading/copying — otherwise a crafted FC16
+     * frame overflows msg.buf and/or registers[] before the quantity check
+     * below (stack-buffer-overflow / CVE-2026-29972 class). The count must be
+     * even and fit both the local array and the remaining message buffer. */
+    if ((registers_bytes & 0x01u) != 0u || registers_bytes > sizeof(registers) ||
+        (uint32_t) nmbs->msg.buf_idx + registers_bytes > sizeof(nmbs->msg.buf))
+        return handle_exception(nmbs, NMBS_EXCEPTION_ILLEGAL_DATA_VALUE);
+
     err = recv(nmbs, registers_bytes);
     if (err != NMBS_ERROR_NONE)
         return err;
 
-    uint16_t registers[0x007B];
     for (int i = 0; i < registers_bytes / 2; i++) {
         registers[i] = get_2(nmbs);
         DEBUG("%d ", registers[i]);
@@ -951,6 +978,14 @@ static nmbs_error read_discrete(nmbs_t* nmbs, uint8_t fc, uint16_t address, uint
     uint8_t coils_bytes = get_1(nmbs);
     DEBUG("b %d\t", coils_bytes);
 
+    /* Security: validate the response byte count BEFORE writing into the
+     * caller-provided values[] bitfield. A malicious server could otherwise
+     * announce coils_bytes independent of the requested quantity and overflow
+     * the buffer (CVE-2026-29972 class). The only valid count is the number of
+     * bytes needed to hold `quantity` coils. */
+    if (coils_bytes != (quantity + 7) / 8)
+        return NMBS_ERROR_INVALID_RESPONSE;
+
     err = recv(nmbs, coils_bytes);
     if (err != NMBS_ERROR_NONE)
         return err;
@@ -1015,6 +1050,14 @@ static nmbs_error read_registers(nmbs_t* nmbs, uint8_t fc, uint16_t address, uin
     uint8_t registers_bytes = get_1(nmbs);
     DEBUG("b %d\t", registers_bytes);
 
+    /* Security: validate the response byte count BEFORE writing into the
+     * caller-provided registers[] buffer. A malicious server could otherwise
+     * announce registers_bytes independent of the requested quantity and
+     * overflow the buffer (CVE-2026-29972). quantity is bounded to 125 above,
+     * so quantity * 2 is the only valid byte count. */
+    if (registers_bytes != quantity * 2)
+        return NMBS_ERROR_INVALID_RESPONSE;
+
     err = recv(nmbs, registers_bytes);
     if (err != NMBS_ERROR_NONE)
         return err;
@@ -1028,9 +1071,6 @@ static nmbs_error read_registers(nmbs_t* nmbs, uint8_t fc, uint16_t address, uin
     err = recv_msg_footer(nmbs);
     if (err != NMBS_ERROR_NONE)
         return err;
-
-    if (registers_bytes != quantity * 2)
-        return NMBS_ERROR_INVALID_RESPONSE;
 
     return NMBS_ERROR_NONE;
 }

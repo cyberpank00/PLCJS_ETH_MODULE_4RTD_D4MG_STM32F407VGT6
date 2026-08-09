@@ -70,7 +70,8 @@ Floats are IEEE-754 float32 in two registers, high word first.
 
 **Holding registers (FC03/06/16)** — config. Global: 100 scan period ms,
 101 LED mode, 102 slave id, 103 TCP port, 104..115 IP/mask/gw, 116 DHCP,
-117 SAVE (`0xA5A5`), 118 REBOOT/BOOT, 119 FACTORY RESET, 130 MCU temp.
+117 SAVE (`0xA5A5`), 118 REBOOT (`0xB00B`) / BOOT (`0xB007`) / KSZ8863 reset
+(`0x8863`), 119 FACTORY RESET, 130 MCU temp.
 Per channel base `500 + ch*10`: +0 enabled, +1 sensor type, +2 alpha mode,
 +3 custom W100 ×10000, +4 calibration range override. Calibration floats base
 `540 + ch*8`: gain/offset for low and high ranges. Nominal RREF floats:
@@ -84,8 +85,9 @@ cmake -S . -B build/Debug -G Ninja `
 cmake --build build/Debug
 ```
 
-Variant identity: `PRODUCT_ID=0x04D1D4A0`, `HW_REVISION=0x0101`,
-`FW_VERSION=0x0100`. Outputs `.elf/.hex/.bin` in `build/Debug/`.
+Variant identity — single source of truth `Application/fw_header/fw_header.h`:
+`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0101`, `FW_VERSION_VALUE=0x0102`.
+Outputs `.elf/.hex/.bin` in `build/Debug/`.
 
 Default network: DHCP on, static fallback `192.168.142.150/24`, gateway
 `192.168.142.1`, Modbus TCP `502`, unit id `1`.

@@ -180,7 +180,7 @@ module id (`0x04D1`), `126` температура MCU (signed 0.1 °C), `127` �
 | 102 | Modbus slave id | 103 | Modbus TCP порт |
 | 104..107 | static IP | 108..111 | netmask | 112..115 | gateway |
 | 116 | net mode: `0` static / `1` DHCP / `2` link-local (default `2`) |
-| 117 | SAVE (`0xA5A5`) | 118 | REBOOT (`0xB00B`) / BOOTLOADER (`0xB007`) |
+| 117 | SAVE (`0xA5A5`) | 118 | REBOOT (`0xB00B`) / BOOTLOADER (`0xB007`) / сброс KSZ8863 (`0x8863`) |
 | 119 | FACTORY RESET (`0xDEAD`) | 130 | температура MCU (RO) |
 | 131 | CAL COMMIT (`0xCA00 \| slot`, slot 0..7) — фиксация калибровки |
 | 132 | CAL ERASE ARM (`0xC1A5`) — взвод аварийного сброса калибровки |
@@ -242,9 +242,9 @@ cmake -S . -B build/Debug -G Ninja `
 cmake --build build/Debug
 ```
 
-Идентичность варианта (вшивается в `fw_header`):
-`PRODUCT_ID=0x04D1D4A0`, `HW_REVISION=0x0101`, `FW_VERSION=0x0100`
-(переопределяются через `-DPRODUCT_ID=...` и т.д.).
+Идентичность варианта — единый источник `Application/fw_header/fw_header.h`:
+`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0101`, `FW_VERSION_VALUE=0x0102`
+(при необходимости переопределяются через `-DFW_PRODUCT_ID=...` и т.д.).
 
 Результаты: `.elf`, `.hex`, `.bin` в `build/Debug/`. `.bin` — OTA-образ с
 `fw_header_t` по смещению `0x200`.

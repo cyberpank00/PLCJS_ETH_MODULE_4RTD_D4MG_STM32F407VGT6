@@ -65,9 +65,7 @@ static bool port_is_valid(ksz8863_port_t port)
 
 void ksz8863_hw_reset(void)
 {
-    /* Drive ETHRST low. CubeMX-generated MX_GPIO_Init() leaves the pin
-     * driving low at boot, so this is mainly a defensive re-assert in case
-     * the chip is being recovered after a runtime error. */
+    /* Drive ETHRST low. */
     HAL_GPIO_WritePin(ETHRST_GPIO_Port, ETHRST_Pin, GPIO_PIN_RESET);
     /* KSZ8863 reset pulse min is 10 us; pad to be safe. */
     HAL_Delay(10);
@@ -76,6 +74,89 @@ void ksz8863_hw_reset(void)
      * ~10 ms from RESETn rising edge to SMI-ready. We give it 20 ms. */
     HAL_GPIO_WritePin(ETHRST_GPIO_Port, ETHRST_Pin, GPIO_PIN_SET);
     HAL_Delay(20);
+}
+
+void ksz8863_boot_init(void)
+{
+    /* Cold boot = power-on / brown-out: the chip has just been powered, no
+     * pass-through traffic exists yet, so a defensive hardware reset costs
+     * nothing and guarantees a clean start even with a slow supply ramp.
+     *
+     * Warm reboot (software reset, IWDG, NRST pin): the switch is alive and
+     * forwarding between ports 1 and 2 — do NOT touch it, the pass-through
+     * traffic must survive the MCU restart. ETHRST is already high (board
+     * pull-up during the MCU reset window, then MX_GPIO_Init()). */
+    const uint32_t csr = RCC->CSR;
+    const bool cold_boot = (csr & (RCC_CSR_PORRSTF | RCC_CSR_BORRSTF)) != 0u;
+
+    if (cold_boot) {
+        ksz8863_hw_reset();
+    }
+
+    /* Consume the flags so the next reboot sees only its own cause. */
+    __HAL_RCC_CLEAR_RESET_FLAGS();
+}
+
+void ksz8863_ensure_rmii_port3(void)
+{
+    /* Global Control 4 (SMI reg 6 at PHY addr 0), bit 6 = port 3 RMII mode.
+     * Normally latched from the strap pins at chip reset; this is a
+     * defensive, idempotent re-check. */
+    uint32_t tmp = 0;
+    if (HAL_ETH_ReadPHYRegister(&heth, 0, 6, &tmp) != HAL_OK) {
+        return;
+    }
+    if ((tmp & 0x0040u) == 0u) {
+        tmp |= 0x0040u;
+        HAL_ETH_WritePHYRegister(&heth, 0, 6, tmp);
+    }
+}
+
+/* ---------------------------------------------------------------------------
+ * Health monitoring / recovery
+ * ------------------------------------------------------------------------- */
+static volatile uint8_t s_recovery_request  = 0u;
+static uint16_t         s_smi_fail_polls    = 0u;
+static uint32_t         s_last_recovery_tick = 0u;
+
+void ksz8863_request_recovery(void)
+{
+    s_recovery_request = 1u;
+}
+
+bool ksz8863_service(bool smi_ok)
+{
+    if (smi_ok) {
+        s_smi_fail_polls = 0u;
+    } else if (s_smi_fail_polls < 0xFFFFu) {
+        s_smi_fail_polls++;
+    }
+
+    /* Operator-requested reset executes unconditionally; the automatic
+     * SMI-dead recovery is rate-limited so a persistently broken chip does
+     * not turn into a reset storm on the pass-through ports. */
+    bool reset_due = (s_recovery_request != 0u);
+    if (!reset_due && s_smi_fail_polls >= KSZ8863_SMI_FAIL_POLLS_LIMIT) {
+        const uint32_t now = HAL_GetTick();
+        if (s_last_recovery_tick == 0u ||
+            (now - s_last_recovery_tick) >= KSZ8863_RECOVERY_MIN_INTERVAL_MS) {
+            reset_due = true;
+        }
+    }
+    if (!reset_due) {
+        return false;
+    }
+
+    s_recovery_request   = 0u;
+    s_smi_fail_polls     = 0u;
+    s_last_recovery_tick = HAL_GetTick();
+    if (s_last_recovery_tick == 0u) {
+        s_last_recovery_tick = 1u;
+    }
+
+    ksz8863_hw_reset();
+    ksz8863_ensure_rmii_port3();
+    return true;
 }
 
 bool ksz8863_self_test(uint16_t *id1_out, uint16_t *id2_out)
