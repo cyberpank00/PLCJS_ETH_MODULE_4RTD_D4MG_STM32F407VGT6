@@ -75,7 +75,8 @@ Unlike the discrete modules, readings are `float32` spread over two registers,
 - Readings (FC04): base `300 + ch*20` — temperature °C, calibrated Ω, raw Ω,
   flags, raw 15-bit code, resolved range.
 - Config (FC03/06/16): base `500 + ch*10` — enabled, sensor type, alpha mode,
-  custom W100 ×10000, calibration range override.
+  custom W100 ×10000, calibration range override, EMA smoothing level (0..3,
+  α = 1/4, 1/8, 1/16; applied to r_cal, raw values stay unfiltered).
 - Calibration coefficients (FC03/06/16): base `540 + ch*8` — gain/offset for the
   low and high range.
 - Nominal reference resistors: `580..583`.
@@ -108,7 +109,7 @@ Keep it that way.
 ### Single sources of truth
 - **Module identity** — `Application/fw_header/fw_header.h`:
   `FW_PRODUCT_ID = 0x504C0403`, `FW_HW_REVISION = 0x0101`,
-  `FW_VERSION_VALUE = 0x0102`.
+  `FW_VERSION_VALUE = 0x0103`.
 - **Firmware version over Modbus** — IR120/IR121 derive from `FW_VERSION_VALUE`.
 - **Register map** — the header comment of `modbus_app.h`, mirrored by the
   `MB_*` constants. Keep comment and constants in step.
@@ -119,7 +120,7 @@ Keep it that way.
 ### Version policy — bump the minor on every change
 
 **Mandatory.** Every change to firmware behaviour ships with `FW_VERSION_VALUE`
-in `fw_header.h` incremented by one minor (`0x0102` → `0x0103`). The version is
+in `fw_header.h` incremented by one minor (`0x0103` → `0x0104`). The version is
 the operator's only way to tell which build is running on a device in the field,
 so an un-bumped change is a defect.
 
@@ -149,6 +150,8 @@ an entry there in the same commit as the bump.
   reverts deployed units to factory defaults.
 - The field is still named `use_dhcp` but holds a tri-state net mode
   (static / DHCP / link-local). Kept for on-flash compatibility.
+- `ch_smooth[]` (EMA level) repurposed the always-zero `reserved_a[]` bytes, so
+  no version bump was needed: deployed units read 0 = smoothing off.
 - **Sector 11 conflict:** the bootloader's `flash_map.h` nominally lists sector
   11 as a third staging sector (currently unused — staging is sectors 8–9 only).
   If the bootloader is ever extended to use it, 4RTD calibration is destroyed.

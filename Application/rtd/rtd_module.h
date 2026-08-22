@@ -10,6 +10,9 @@
   *      uncalibrated resistance using the nominal RREF,
   *    - applies the per-channel/per-range 2-point calibration
   *      (R = gain·R_raw + offset) to remove RREF error and switch Ron,
+  *    - optionally smooths the calibrated resistance with a per-channel EMA
+  *      (level 0 = off, 1..3 => alpha 1/4, 1/8, 1/16); the raw resistance
+  *      and the ADC code stay unfiltered,
   *    - converts the calibrated resistance to temperature for the selected
   *      scale (unless it is a pure-resistance mode),
   *    - drives its status LED (solid = active, off = inactive, fast blink =

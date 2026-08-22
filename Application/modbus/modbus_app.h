@@ -33,6 +33,7 @@
   *      +0 enabled (0/1)      +1 sensor type (rtd_type_t)
   *      +2 alpha mode (0 default / 1 custom)   +3 custom W100 ×10000
   *      +4 calibration range override (0 auto / 1 low / 2 high, runtime only)
+  *      +5 smoothing (EMA): 0 off, 1 weak (1/4), 2 medium (1/8), 3 strong (1/16)
   *    Calibration coefficients (float32), base 540 + ch*8 (WRITE-ONCE):
   *      +0..1 gain low range     +2..3 offset low range
   *      +4..5 gain high range    +6..7 offset high range
@@ -133,7 +134,8 @@ extern "C" {
 #define MB_HR_RTD_CFG_ALPHA_MODE    2u
 #define MB_HR_RTD_CFG_W100          3u
 #define MB_HR_RTD_CFG_CALRANGE      4u
-#define MB_HR_RTD_CFG_SPAN          5u
+#define MB_HR_RTD_CFG_SMOOTH        5u
+#define MB_HR_RTD_CFG_SPAN          6u
 
 /* ---- RTD calibration coefficients (holding, float32) ---- */
 #define MB_HR_RTD_CAL_BASE          540u

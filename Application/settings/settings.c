@@ -88,7 +88,7 @@ void settings_reset_to_defaults(void)
         s_settings.ch_enabled[ch]     = 0u;
         s_settings.ch_type[ch]        = SETTINGS_DEF_CH_TYPE;
         s_settings.ch_alpha_mode[ch]  = 0u;
-        s_settings.reserved_a[ch]     = 0u;
+        s_settings.ch_smooth[ch]      = SETTINGS_DEF_CH_SMOOTH;
         s_settings.ch_custom_w100[ch] =
             rtd_type_default_w100_x10000(SETTINGS_DEF_CH_TYPE);
     }

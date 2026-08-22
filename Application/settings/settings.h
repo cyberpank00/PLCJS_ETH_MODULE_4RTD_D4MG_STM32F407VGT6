@@ -64,6 +64,12 @@ extern "C" {
 /* Per-channel RTD defaults. */
 #define SETTINGS_DEF_CH_TYPE        8u    /* RTD_TYPE_PT100 */
 
+/* Software smoothing (EMA) levels: 0 = off, 1..3 => alpha 1/4, 1/8, 1/16.
+ * Applied to the calibrated resistance before temperature conversion. */
+#define SETTINGS_SMOOTH_OFF         0u
+#define SETTINGS_SMOOTH_MAX         3u
+#define SETTINGS_DEF_CH_SMOOTH      SETTINGS_SMOOTH_OFF
+
 /* Nominal reference resistors (Ω) for the two RANG positions. These are only
  * starting estimates; the per-channel/per-range calibration removes the real
  * RREF error and the analog-switch on-resistance. */
@@ -101,7 +107,9 @@ typedef struct {
     uint8_t  ch_enabled[SETTINGS_RTD_CHANNELS];
     uint8_t  ch_type[SETTINGS_RTD_CHANNELS];       /* rtd_type_t              */
     uint8_t  ch_alpha_mode[SETTINGS_RTD_CHANNELS]; /* 0 = default, 1 = custom */
-    uint8_t  reserved_a[SETTINGS_RTD_CHANNELS];
+    /* Was reserved_a (always zero) — repurposed without a layout change, so no
+     * SETTINGS_VERSION bump: deployed units read 0 = smoothing off. */
+    uint8_t  ch_smooth[SETTINGS_RTD_CHANNELS];     /* EMA level 0..3          */
     uint16_t ch_custom_w100[SETTINGS_RTD_CHANNELS];/* W100 × 10000            */
 
     /* NOTE: the 2-point linear calibration (R_true = gain·R_raw + offset) is

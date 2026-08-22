@@ -241,6 +241,7 @@ static uint16_t read_holding(uint16_t address)
         case MB_HR_RTD_CFG_ALPHA_MODE: return s->ch_alpha_mode[ch];
         case MB_HR_RTD_CFG_W100:       return s->ch_custom_w100[ch];
         case MB_HR_RTD_CFG_CALRANGE:   return rtd_module_get_cal_override(ch);
+        case MB_HR_RTD_CFG_SMOOTH:     return s->ch_smooth[ch];
         default:                       return 0u;
         }
     }
@@ -316,6 +317,10 @@ static nmbs_error apply_holding_write(uint16_t address, uint16_t value)
             if (value > RTD_CAL_OVERRIDE_HIGH) { return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE; }
             rtd_module_set_cal_override(ch, (uint8_t)value);
             return NMBS_ERROR_NONE;   /* override handles its own apply */
+        case MB_HR_RTD_CFG_SMOOTH:
+            if (value > SETTINGS_SMOOTH_MAX) { return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE; }
+            s->ch_smooth[ch] = (uint8_t)value;
+            break;
         default:
             return NMBS_EXCEPTION_ILLEGAL_DATA_ADDRESS;
         }

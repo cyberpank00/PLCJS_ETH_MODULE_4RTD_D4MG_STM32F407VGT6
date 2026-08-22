@@ -63,6 +63,15 @@ static uint8_t  s_cal_override[RTD_MODULE_CHANNEL_COUNT];
 static uint8_t  s_settle[RTD_MODULE_CHANNEL_COUNT];
 static uint16_t s_scan_ms = SETTINGS_DEF_SCAN_MS;
 
+/* Software smoothing (EMA): y += alpha * (x - y), alpha = 1 / 2^(level+1),
+ * i.e. level 1/2/3 => 1/4, 1/8, 1/16. Applied to the calibrated resistance.
+ * The filter state is seeded with the first valid sample and reset on fault,
+ * settle and any configuration change, so it never mixes readings taken with
+ * different ranges/types or drags a stale value after a sensor fault. */
+static uint8_t  s_smooth[RTD_MODULE_CHANNEL_COUNT];
+static float    s_ema[RTD_MODULE_CHANNEL_COUNT];
+static bool     s_ema_seeded[RTD_MODULE_CHANNEL_COUNT];
+
 /* LED blink state. */
 static uint16_t s_blink_timer;
 static uint8_t  s_blink_on;
@@ -127,12 +136,21 @@ void rtd_module_apply_config(void)
                                     : rtd_type_default_w100_x10000(type);
         s_w100[ch] = (float)w100_x / 10000.0f;
 
+        uint8_t smooth = s->ch_smooth[ch];
+        if (smooth > SETTINGS_SMOOTH_MAX) { smooth = SETTINGS_SMOOTH_OFF; }
+        s_smooth[ch] = smooth;
+
         const uint8_t range = resolve_range(ch);
         if (range != s_range[ch]) {
             rang_set(ch, range);
             s_range[ch]  = range;
             s_settle[ch] = RTD_SETTLE_TICKS;
         }
+
+        /* Any (re)configuration restarts the filter: the next valid sample
+         * seeds it, avoiding a slow crawl from a value taken under the old
+         * configuration. */
+        s_ema_seeded[ch] = false;
     }
 }
 
@@ -155,10 +173,11 @@ void rtd_module_tick(void)
             st->fault      = true;
             st->fault_code = max31865_read_fault(ch);
             max31865_clear_fault(ch, RTD_MAX_CONFIG);
-            st->valid       = false;
-            st->r_raw       = NAN;
-            st->r_cal       = NAN;
-            st->temperature = NAN;
+            st->valid        = false;
+            st->r_raw        = NAN;
+            st->r_cal        = NAN;
+            st->temperature  = NAN;
+            s_ema_seeded[ch] = false;   /* restart smoothing after the fault */
             continue;
         }
 
@@ -168,17 +187,31 @@ void rtd_module_tick(void)
         const float ratio = (float)code / RTD_ADC_FULL_SCALE;
         const float rref  = s->rref_nominal[range];
         const float r_raw = ratio * rref;
-        const float r_cal = calstore_gain(ch, range) * r_raw + calstore_offset(ch, range);
-
-        st->r_raw = r_raw;
-        st->r_cal = r_cal;
+        float       r_cal = calstore_gain(ch, range) * r_raw + calstore_offset(ch, range);
 
         if (s_settle[ch] > 0u) {
             s_settle[ch]--;
-            st->valid = false;
+            st->valid        = false;
+            s_ema_seeded[ch] = false;   /* do not feed settling samples in    */
         } else {
             st->valid = true;
+
+            /* Software smoothing (EMA) of the calibrated resistance; the raw
+             * resistance and the ADC code stay unfiltered for diagnostics. */
+            if (s_smooth[ch] != SETTINGS_SMOOTH_OFF) {
+                if (!s_ema_seeded[ch]) {
+                    s_ema[ch]        = r_cal;
+                    s_ema_seeded[ch] = true;
+                } else {
+                    const float alpha = 1.0f / (float)(1u << (s_smooth[ch] + 1u));
+                    s_ema[ch] += alpha * (r_cal - s_ema[ch]);
+                }
+                r_cal = s_ema[ch];
+            }
         }
+
+        st->r_raw = r_raw;
+        st->r_cal = r_cal;
 
         /* Temperature is only meaningful for RTD scales in normal (non-cal)
          * operation. Resistance modes and calibration overrides report NaN. */

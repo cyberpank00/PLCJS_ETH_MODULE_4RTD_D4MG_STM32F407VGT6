@@ -73,9 +73,34 @@ Floats are IEEE-754 float32 in two registers, high word first.
 117 SAVE (`0xA5A5`), 118 REBOOT (`0xB00B`) / BOOT (`0xB007`) / KSZ8863 reset
 (`0x8863`), 119 FACTORY RESET, 130 MCU temp.
 Per channel base `500 + ch*10`: +0 enabled, +1 sensor type, +2 alpha mode,
-+3 custom W100 ×10000, +4 calibration range override. Calibration floats base
-`540 + ch*8`: gain/offset for low and high ranges. Nominal RREF floats:
-580..581 low, 582..583 high.
++3 custom W100 ×10000, +4 calibration range override, +5 smoothing (see below).
+Calibration floats base `540 + ch*8`: gain/offset for low and high ranges.
+Nominal RREF floats: 580..581 low, 582..583 high.
+
+## Software smoothing
+
+On top of the MAX31865's 50 Hz notch filter, the firmware offers a per-channel
+software filter — exponential moving average (EMA), enabled via register
+`500 + ch*10 + 5`: 0 = off (default), 1 = weak (α = 1/4), 2 = medium (α = 1/8),
+3 = strong (α = 1/16). It is applied to the calibrated resistance before
+temperature conversion (`R = R + α·(R_meas − R)`); the raw resistance and the
+ADC code stay unfiltered for diagnostics. The filter restarts (re-seeds from
+the first valid sample) after a sensor fault, a range/type change or any
+channel reconfiguration.
+
+**Note: with smoothing enabled the analog acquisition period (register `100`)
+is not equal to the reading settling time.** The reading updates every scan,
+but after a step change of the measured value it approaches the new value
+exponentially. Expected RTD reading settling time:
+
+```
+t_settle(63 %) ≈ T_scan / α
+t_settle(95 %) ≈ 3 · T_scan / α
+```
+
+At the default `T_scan = 250 ms`: weak ≈ 1/3 s, medium ≈ 2/6 s,
+strong ≈ 4/12 s (63 % / 95 %). The setting persists via the SAVE trigger
+(register `117`).
 
 ## Build
 
@@ -86,7 +111,7 @@ cmake --build build/Debug
 ```
 
 Variant identity — single source of truth `Application/fw_header/fw_header.h`:
-`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0101`, `FW_VERSION_VALUE=0x0102`.
+`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0101`, `FW_VERSION_VALUE=0x0103`.
 Outputs `.elf/.hex/.bin` in `build/Debug/`.
 
 Default network: DHCP on, static fallback `192.168.142.150/24`, gateway
