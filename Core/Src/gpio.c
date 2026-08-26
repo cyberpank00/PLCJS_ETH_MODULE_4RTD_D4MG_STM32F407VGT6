@@ -52,8 +52,11 @@ void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOE_CLK_ENABLE();
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(ETHRST_GPIO_Port, ETHRST_Pin, GPIO_PIN_RESET);
+  /*Configure GPIO pin Output Level: ETHRST high = KSZ8863 not held in reset.
+   * The switch must keep forwarding pass-through traffic across MCU restarts;
+   * a cold-boot-only reset is issued from ksz8863_boot_init(). Leaving this at
+   * RESET held the switch in reset across warm reboots (dead RJ45 link). */
+  HAL_GPIO_WritePin(ETHRST_GPIO_Port, ETHRST_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(STAT_LED_GPIO_Port, STAT_LED_Pin, GPIO_PIN_RESET);
