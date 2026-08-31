@@ -102,7 +102,7 @@ void MX_GPIO_Init(void)
   HAL_GPIO_Init(FACT_RES_GPIO_Port, &GPIO_InitStruct);
 
   /* MAX31865 chip-selects (board-rev pinout, one per port):
-   *   CS0 = PA8, CS1 = PC8 (shared with STAT_LED), CS2 = PD9, CS3 = PB15.
+   *   CS0 = PA8, CS1 = PC8, CS2 = PD9, CS3 = PB15.
    * RANG stays on PD10 (RTD0), PD8 (RTD1), PB14 (RTD2), PE15 (RTD3). */
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
@@ -112,7 +112,7 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pin = RTD0_CS_Pin;
   HAL_GPIO_Init(RTD0_CS_GPIO_Port, &GPIO_InitStruct);
 
-  /* CS1 (PC8) on port C — same pin as STAT_LED (already output). */
+  /* CS1 (PC8) on port C. */
   GPIO_InitStruct.Pin = RTD1_CS_Pin;
   HAL_GPIO_Init(RTD1_CS_GPIO_Port, &GPIO_InitStruct);
 

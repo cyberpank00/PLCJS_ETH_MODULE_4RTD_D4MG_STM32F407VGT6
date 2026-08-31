@@ -61,18 +61,17 @@ void Error_Handler(void);
 #define ETHINT_GPIO_Port GPIOB
 #define ETHRST_Pin GPIO_PIN_11
 #define ETHRST_GPIO_Port GPIOD
-#define STAT_LED_Pin GPIO_PIN_8
-#define STAT_LED_GPIO_Port GPIOC
-#define FACT_RES_Pin GPIO_PIN_6
-#define FACT_RES_GPIO_Port GPIOC
+#define STAT_LED_Pin GPIO_PIN_9
+#define STAT_LED_GPIO_Port GPIOE
+#define FACT_RES_Pin GPIO_PIN_10
+#define FACT_RES_GPIO_Port GPIOE
 
 /* ---- 4RTD analog board (MAX31865 x4) ------------------------------------ */
 /* SPI1: SCLK = PA5, MISO = PA6, MOSI = PB5 (all AF5). Configured in spi.c. */
 
 /* Per-channel MAX31865 chip-select (active-low, idle high).
  * Board-revision pinout: CS0=PA8, CS1=PC8, CS2=PD9, CS3=PB15.
- * NOTE: CS1 (PC8) shares the pin with STAT_LED — on this revision the status
- * indication is on a separate board. */
+ * (STAT_LED/FACT_RES moved to PE9/PE10 on this revision, so PC8/PC6 are free.) */
 #define RTD0_CS_Pin        GPIO_PIN_8
 #define RTD0_CS_GPIO_Port  GPIOA
 #define RTD1_CS_Pin        GPIO_PIN_8

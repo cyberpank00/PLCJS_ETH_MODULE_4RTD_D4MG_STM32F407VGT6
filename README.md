@@ -290,7 +290,7 @@ cmake --build build/Debug
 ```
 
 Идентичность варианта — единый источник `Application/fw_header/fw_header.h`:
-`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0101`, `FW_VERSION_VALUE=0x0106`
+`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0101`, `FW_VERSION_VALUE=0x0107`
 (при необходимости переопределяются через `-DFW_PRODUCT_ID=...` и т.д.).
 
 Результаты: `.elf`, `.hex`, `.bin` в `build/Debug/`. `.bin` — OTA-образ с
