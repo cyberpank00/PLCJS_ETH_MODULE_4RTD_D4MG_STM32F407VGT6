@@ -101,18 +101,27 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(FACT_RES_GPIO_Port, &GPIO_InitStruct);
 
-  /* MAX31865 CS + RANG on port D (PD8, PD9, PD10, PD13). */
-  GPIO_InitStruct.Pin = RTD0_CS_Pin|RTD1_CS_Pin|RTD0_RANG_Pin|RTD1_RANG_Pin;
+  /* MAX31865 chip-selects (board-rev pinout, one per port):
+   *   CS0 = PA8, CS1 = PC8 (shared with STAT_LED), CS2 = PD9, CS3 = PB15.
+   * RANG stays on PD10 (RTD0), PD8 (RTD1), PB14 (RTD2), PE15 (RTD3). */
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+
+  /* CS0 (PA8) on port A. */
+  GPIO_InitStruct.Pin = RTD0_CS_Pin;
+  HAL_GPIO_Init(RTD0_CS_GPIO_Port, &GPIO_InitStruct);
+
+  /* CS1 (PC8) on port C — same pin as STAT_LED (already output). */
+  GPIO_InitStruct.Pin = RTD1_CS_Pin;
+  HAL_GPIO_Init(RTD1_CS_GPIO_Port, &GPIO_InitStruct);
+
+  /* CS2 (PD9) + RANG on port D (PD8, PD9, PD10). */
+  GPIO_InitStruct.Pin = RTD2_CS_Pin|RTD0_RANG_Pin|RTD1_RANG_Pin;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
-  /* MAX31865 CS + RANG on port B (PB10, PB14, PB15). */
-  GPIO_InitStruct.Pin = RTD2_CS_Pin|RTD3_CS_Pin|RTD2_RANG_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  /* CS3 (PB15) + RANG on port B (PB14, PB15). */
+  GPIO_InitStruct.Pin = RTD3_CS_Pin|RTD2_RANG_Pin;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /* Channel RANG (PE15) + status LEDs (PE11..PE14) on port E. */

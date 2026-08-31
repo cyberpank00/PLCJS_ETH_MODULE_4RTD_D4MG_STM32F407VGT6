@@ -69,14 +69,17 @@ void Error_Handler(void);
 /* ---- 4RTD analog board (MAX31865 x4) ------------------------------------ */
 /* SPI1: SCLK = PA5, MISO = PA6, MOSI = PB5 (all AF5). Configured in spi.c. */
 
-/* Per-channel MAX31865 chip-select (active-low, idle high). */
-#define RTD0_CS_Pin        GPIO_PIN_13
-#define RTD0_CS_GPIO_Port  GPIOD
-#define RTD1_CS_Pin        GPIO_PIN_9
-#define RTD1_CS_GPIO_Port  GPIOD
-#define RTD2_CS_Pin        GPIO_PIN_15
-#define RTD2_CS_GPIO_Port  GPIOB
-#define RTD3_CS_Pin        GPIO_PIN_10
+/* Per-channel MAX31865 chip-select (active-low, idle high).
+ * Board-revision pinout: CS0=PA8, CS1=PC8, CS2=PD9, CS3=PB15.
+ * NOTE: CS1 (PC8) shares the pin with STAT_LED — on this revision the status
+ * indication is on a separate board. */
+#define RTD0_CS_Pin        GPIO_PIN_8
+#define RTD0_CS_GPIO_Port  GPIOA
+#define RTD1_CS_Pin        GPIO_PIN_8
+#define RTD1_CS_GPIO_Port  GPIOC
+#define RTD2_CS_Pin        GPIO_PIN_9
+#define RTD2_CS_GPIO_Port  GPIOD
+#define RTD3_CS_Pin        GPIO_PIN_15
 #define RTD3_CS_GPIO_Port  GPIOB
 
 /* Per-channel range select (ADG849 analog switch: low RREF <-> high RREF). */

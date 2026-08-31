@@ -40,7 +40,12 @@ void spi_bus_init(void)
     /* --- SPI1 configuration -------------------------------------------- */
     SPI1->CR1 = 0u;
     SPI1->CR1 =  SPI_CR1_MSTR          /* master                            */
-               | (4u << SPI_CR1_BR_Pos)/* PCLK2 / 32 (~2.6 MHz)             */
+               | (7u << SPI_CR1_BR_Pos)/* PCLK2 / 256 (~328 kHz): slow clock */
+                                       /* for signal integrity — the board  */
+                                       /* has no line termination and the   */
+                                       /* SPI routing is marginal, so we     */
+                                       /* trade throughput (irrelevant for   */
+                                       /* tiny register reads) for margin.   */
                | SPI_CR1_CPOL          /* CPOL = 1                          */
                | SPI_CR1_CPHA          /* CPHA = 1  -> SPI mode 3           */
                | SPI_CR1_SSM           /* software slave management         */
