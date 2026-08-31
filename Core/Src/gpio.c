@@ -103,7 +103,7 @@ void MX_GPIO_Init(void)
 
   /* MAX31865 chip-selects (board-rev pinout, one per port):
    *   CS0 = PA8, CS1 = PC8, CS2 = PD9, CS3 = PB15.
-   * RANG stays on PD10 (RTD0), PD8 (RTD1), PB14 (RTD2), PE15 (RTD3). */
+   * RANG: RTD0=PD10, RTD1=PC7, RTD2=PB14, RTD3=PE15 (HIGH range = pin high). */
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
@@ -112,12 +112,12 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pin = RTD0_CS_Pin;
   HAL_GPIO_Init(RTD0_CS_GPIO_Port, &GPIO_InitStruct);
 
-  /* CS1 (PC8) on port C. */
-  GPIO_InitStruct.Pin = RTD1_CS_Pin;
-  HAL_GPIO_Init(RTD1_CS_GPIO_Port, &GPIO_InitStruct);
+  /* CS1 (PC8) + RANG1 (PC7) on port C. */
+  GPIO_InitStruct.Pin = RTD1_CS_Pin|RTD1_RANG_Pin;
+  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /* CS2 (PD9) + RANG on port D (PD8, PD9, PD10). */
-  GPIO_InitStruct.Pin = RTD2_CS_Pin|RTD0_RANG_Pin|RTD1_RANG_Pin;
+  /* CS2 (PD9) + RANG0 (PD10) on port D. */
+  GPIO_InitStruct.Pin = RTD2_CS_Pin|RTD0_RANG_Pin;
   HAL_GPIO_Init(GPIOD, &GPIO_InitStruct);
 
   /* CS3 (PB15) + RANG on port B (PB14, PB15). */

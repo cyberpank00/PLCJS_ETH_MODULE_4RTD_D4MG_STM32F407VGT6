@@ -84,8 +84,8 @@ void Error_Handler(void);
 /* Per-channel range select (ADG849 analog switch: low RREF <-> high RREF). */
 #define RTD0_RANG_Pin       GPIO_PIN_10
 #define RTD0_RANG_GPIO_Port GPIOD
-#define RTD1_RANG_Pin       GPIO_PIN_8
-#define RTD1_RANG_GPIO_Port GPIOD
+#define RTD1_RANG_Pin       GPIO_PIN_7
+#define RTD1_RANG_GPIO_Port GPIOC
 #define RTD2_RANG_Pin       GPIO_PIN_14
 #define RTD2_RANG_GPIO_Port GPIOB
 #define RTD3_RANG_Pin       GPIO_PIN_15
