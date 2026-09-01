@@ -111,7 +111,7 @@ cmake --build build/Debug
 ```
 
 Variant identity — single source of truth `Application/fw_header/fw_header.h`:
-`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0101`, `FW_VERSION_VALUE=0x0108`.
+`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0101`, `FW_VERSION_VALUE=0x0109`.
 Outputs `.elf/.hex/.bin` in `build/Debug/`.
 
 Default network: DHCP on, static fallback `192.168.142.150/24`, gateway
