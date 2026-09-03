@@ -3,10 +3,10 @@
   * @file    calstore.h
   * @brief   Write-once calibration store for the 4RTD module.
   *
-  * Per-channel / per-range 2-point linear calibration (R_true = gain·R_raw +
-  * offset) is kept in a dedicated internal-Flash sector (Sector 11) that the
+  * Per-channel / per-gain-class 2-point linear calibration (R_true = gain·R_raw
+  * + offset) is kept in a dedicated internal-Flash sector (Sector 11) that the
   * firmware NEVER erases during normal operation — not on settings save, not on
-  * factory reset. Each of the 8 (channel × range) slots can be committed
+  * factory reset. Each of the 20 (channel × gain class) slots can be committed
   * exactly once: once a slot is programmed it cannot be rewritten, because
   * internal Flash can only clear bits (1 → 0) without a full sector erase.
   *
@@ -30,41 +30,35 @@ extern "C" {
 #endif
 
 #define CALSTORE_CHANNELS   4u
-#define CALSTORE_RANGES     2u
+#define CALSTORE_GCLASSES   5u    /* RTD_GCLASS_COUNT */
+#define CALSTORE_SLOTS      (CALSTORE_CHANNELS * CALSTORE_GCLASSES)   /* 20 */
 
-/* Coefficient slot codes used by the Modbus adapter (matches the 540+ register
- * layout: gain low, offset low, gain high, offset high). */
-#define CALSTORE_SLOT_GAIN_LOW    0u
-#define CALSTORE_SLOT_OFF_LOW     1u
-#define CALSTORE_SLOT_GAIN_HIGH   2u
-#define CALSTORE_SLOT_OFF_HIGH    3u
-#define CALSTORE_SLOT_COUNT       4u
+/** Slot index used by the Modbus commit trigger and the lock mask. */
+#define CALSTORE_SLOT(ch, gclass)   ((uint8_t)((ch) * CALSTORE_GCLASSES + (gclass)))
 
 /** Load committed slots from Flash into the live coefficients. Un-committed
- *  (channel, range) pairs are initialised to the neutral defaults. */
+ *  (channel, gain class) pairs are initialised to the neutral defaults. */
 void calstore_init(void);
 
-/** True if the (channel, range) slot has been committed (write-locked). */
-bool calstore_is_locked(uint8_t ch, uint8_t range);
+/** True if the (channel, gain class) slot has been committed (write-locked). */
+bool calstore_is_locked(uint8_t ch, uint8_t gclass);
 
-/** Bitmask of locked slots: bit (ch*2 + range) set = locked. */
-uint16_t calstore_lock_mask(void);
+/** Bitmask of locked slots: bit CALSTORE_SLOT(ch, gclass) set = locked. */
+uint32_t calstore_lock_mask(void);
 
 /** Live gain / offset used by the acquisition path. NAN-safe defaults. */
-float calstore_gain(uint8_t ch, uint8_t range);
-float calstore_offset(uint8_t ch, uint8_t range);
-
-/** Read a live coefficient by slot code (CALSTORE_SLOT_*). */
-float calstore_get_coeff(uint8_t ch, uint8_t slot);
+float calstore_gain(uint8_t ch, uint8_t gclass);
+float calstore_offset(uint8_t ch, uint8_t gclass);
 
 /** Update a live coefficient (preview). Returns false if the slot is locked
  *  or the arguments are out of range. Does NOT touch Flash. */
-bool calstore_set_coeff(uint8_t ch, uint8_t slot, float value);
+bool calstore_set_gain(uint8_t ch, uint8_t gclass, float value);
+bool calstore_set_offset(uint8_t ch, uint8_t gclass, float value);
 
-/** Persist the live gain/offset of (channel, range) into its Flash slot and
- *  lock it. Returns false if already locked, out of range, or on Flash error.
- *  One-shot: a locked slot cannot be re-committed. */
-bool calstore_commit(uint8_t ch, uint8_t range);
+/** Persist the live gain/offset of (channel, gain class) into its Flash slot
+ *  and lock it. Returns false if already locked, out of range, or on Flash
+ *  error. One-shot: a locked slot cannot be re-committed. */
+bool calstore_commit(uint8_t ch, uint8_t gclass);
 
 /** Emergency service action: erase the calibration sector, unlock every slot
  *  and revert the live coefficients to defaults. Returns false on Flash error. */

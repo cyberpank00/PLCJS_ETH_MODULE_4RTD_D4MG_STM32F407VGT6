@@ -70,7 +70,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Application/fw_header/fw_header.c
     # RTD analog front-end
     Application/spi/spi_bus.c
-    Application/max31865/max31865.c
+    Application/ads1220/ads1220.c
     Application/rtd/rtd_scales.c
     Application/rtd/rtd_module.c
     # Third-party
@@ -91,7 +91,7 @@ target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     Application/modbus
     Application/fw_header
     Application/spi
-    Application/max31865
+    Application/ads1220
     Application/rtd
     Application/third_party/nanomodbus
 )

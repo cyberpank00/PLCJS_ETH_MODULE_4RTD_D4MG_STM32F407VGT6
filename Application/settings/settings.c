@@ -93,8 +93,8 @@ void settings_reset_to_defaults(void)
             rtd_type_default_w100_x10000(SETTINGS_DEF_CH_TYPE);
     }
 
-    s_settings.rref_nominal[RTD_RANGE_LOW]  = SETTINGS_DEF_RREF_LOW;
-    s_settings.rref_nominal[RTD_RANGE_HIGH] = SETTINGS_DEF_RREF_HIGH;
+    s_settings.rref_nominal = SETTINGS_DEF_RREF;
+    s_settings.reserved_f   = 0.0f;
 
     s_settings.crc32            = settings_crc(&s_settings);
 }

@@ -20,8 +20,13 @@
   *  DIN 43760 polynomial scaled by the α ratio. The forward R(t) function is
   *  inverted numerically (bisection) to obtain the temperature.
   *
-  *  Two pure-resistance modes (0..2 kΩ, 0..5 kΩ) report the measured
+  *  Two pure-resistance modes (0..200 Ω, 0..2 kΩ) report the measured
   *  resistance directly (temperature is reported as NaN).
+  *
+  *  Every type belongs to a *gain class* (RTD_GCLASS_*) that selects the
+  *  ADS1220 PGA gain and therefore the full-scale resistance
+  *  (FS = 2·RREF / gain = 4000 Ω / gain with RREF = 2 kΩ). Calibration is
+  *  stored per channel and gain class.
   ******************************************************************************
   */
 #ifndef APPLICATION_RTD_SCALES_H
@@ -55,14 +60,18 @@ typedef enum {
     RTD_TYPE_CU1000,    /* Cu1000 Cu      R0=1000 */
     RTD_TYPE_1000P,     /* 1000П Pt ГОСТ  R0=1000 */
     RTD_TYPE_PT1000,    /* Pt1000 Pt IEC  R0=1000 */
+    RTD_TYPE_RES_200,   /* resistance 0..200 Ω    */
     RTD_TYPE_RES_2K,    /* resistance 0..2 kΩ     */
-    RTD_TYPE_RES_5K,    /* resistance 0..5 kΩ     */
     RTD_TYPE_COUNT
 } rtd_type_t;
 
-/* Reference-resistor range selected via the ADG849 (RANG pin). */
-#define RTD_RANGE_LOW   0u   /* low RREF  (~400 Ω)  — 50/100 Ω sensors     */
-#define RTD_RANGE_HIGH  1u   /* high RREF (~4000 Ω) — 500/1000 Ω, resistance */
+/* Gain classes (ADS1220 PGA gain per sensor nominal). FS_R = 4000 Ω / gain. */
+#define RTD_GCLASS_50       0u   /* gain 16, FS 250 Ω  — 50 Ω sensors            */
+#define RTD_GCLASS_100      1u   /* gain 8,  FS 500 Ω  — 100 Ω sensors, R 0..200 */
+#define RTD_GCLASS_500      2u   /* gain 2,  FS 2000 Ω — 500 Ω sensors           */
+#define RTD_GCLASS_1000     3u   /* gain 1,  FS 4000 Ω — 1000 Ω sensors          */
+#define RTD_GCLASS_2000     4u   /* gain 1,  FS 4000 Ω — R 0..2000               */
+#define RTD_GCLASS_COUNT    5u
 
 typedef enum {
     RTD_MAT_PT = 0,
@@ -78,14 +87,20 @@ typedef struct {
     float          w100_default;  /* default R100/R0                        */
     float          k1;            /* Pt: δ  | Cu: sub-zero β | Ni/RES: n/a  */
     float          k2;            /* Pt: β  | others: n/a                   */
-    uint8_t        range;         /* RTD_RANGE_LOW / RTD_RANGE_HIGH         */
+    uint8_t        gclass;        /* RTD_GCLASS_*                           */
 } rtd_type_info_t;
 
 /** Get static info for a sensor type (NULL if out of range). */
 const rtd_type_info_t* rtd_type_info(uint8_t type);
 
-/** Reference-resistor range required by a sensor type. */
-uint8_t rtd_type_range(uint8_t type);
+/** Gain class required by a sensor type. */
+uint8_t rtd_type_gclass(uint8_t type);
+
+/** ADS1220 gain code (ADS1220_GAIN_*) for a gain class. */
+uint8_t rtd_gclass_gain_code(uint8_t gclass);
+
+/** Numeric PGA gain (1, 2, 8, 16 ...) for a gain class. */
+float rtd_gclass_gain(uint8_t gclass);
 
 /** true for the pure-resistance output modes. */
 bool rtd_type_is_resistance(uint8_t type);

@@ -58,10 +58,10 @@ typedef struct __attribute__((packed)) {
 #define FW_PRODUCT_ID    0x504C0403u  /* PL, 4ch, RTD */
 #endif
 #ifndef FW_HW_REVISION
-#define FW_HW_REVISION   0x0101u  /* hw:01.01 */
+#define FW_HW_REVISION   0x0201u  /* hw:02.01 (ADS1220 board) */
 #endif
 #ifndef FW_VERSION_VALUE
-#define FW_VERSION_VALUE 0x0109u  /* fw:01.09 */
+#define FW_VERSION_VALUE 0x0200u  /* fw:02.00 */
 #endif
 
 /** The single header instance placed in the .fw_header linker section. */

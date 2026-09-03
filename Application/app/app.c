@@ -51,7 +51,7 @@ uint32_t modbus_app_last_request_tick(void);
  * Sub-tasks
  * ------------------------------------------------------------------------- */
 
-/* RTD acquisition task: reads all four MAX31865 channels once per scan
+/* RTD acquisition task: reads all four ADS1220 channels once per scan
  * period (configurable, default 250 ms). */
 static void rtd_task(void* arg)
 {

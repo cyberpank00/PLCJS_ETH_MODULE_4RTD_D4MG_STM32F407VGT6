@@ -1,12 +1,12 @@
 /**
   ******************************************************************************
   * @file    spi_bus.h
-  * @brief   Minimal bare-register SPI1 master driver for the MAX31865 chain.
+  * @brief   Minimal bare-register SPI1 master driver for the ADS1220 chain.
   *
-  *  SPI1 is shared by all four MAX31865 converters (individual chip-selects are
-  *  driven by the MAX31865 driver). The bus is configured as:
+  *  SPI1 is shared by all four ADS1220 converters (individual chip-selects are
+  *  driven by the ADS1220 driver). The bus is configured as:
   *    - Master, 8-bit, MSB first
-  *    - SPI mode 3 (CPOL = 1, CPHA = 1) as required by the MAX31865
+  *    - SPI mode 1 (CPOL = 0, CPHA = 1) as required by the ADS1220
   *    - ~2.6 MHz (PCLK2 / 32) — conservative, tolerant of the digital isolators
   *
   *  Pins (AF5):

@@ -41,8 +41,7 @@ void spi_bus_init(void)
     SPI1->CR1 = 0u;
     SPI1->CR1 =  SPI_CR1_MSTR          /* master                            */
                | (4u << SPI_CR1_BR_Pos)/* PCLK2 / 32 (~2.6 MHz)             */
-               | SPI_CR1_CPOL          /* CPOL = 1                          */
-               | SPI_CR1_CPHA          /* CPHA = 1  -> SPI mode 3           */
+               | SPI_CR1_CPHA          /* CPOL = 0, CPHA = 1 -> SPI mode 1  */
                | SPI_CR1_SSM           /* software slave management         */
                | SPI_CR1_SSI;          /* internal NSS high (master)        */
     SPI1->CR2 = 0u;

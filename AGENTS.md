@@ -1,9 +1,10 @@
 # AGENTS.md
 
 Firmware for the PLCJS Ethernet 4RTD module (4x RTD temperature inputs via
-MAX31865, STM32F407VGT6, KSZ8863 switch, Modbus TCP). This file is the
-orientation map for agents; user-facing documentation lives in `README.md` /
-`README_EN.md`.
+ADS1220, STM32F407VGT6, KSZ8863 switch, Modbus TCP). **Board HW2.1**; the
+HW1.x firmware (MAX31865 + ADG849 range switch) is tagged `hw1.1-last`.
+This file is the orientation map for agents; user-facing documentation lives in
+`README.md` / `README_EN.md`.
 
 Derived from the 12DI variant (`Initial 4RTD firmware adapted from 12DI
 variant`), then extended with the analog acquisition and calibration chain. It
@@ -53,10 +54,10 @@ of which carry hand edits outside `USER CODE` guards (notably
 | Module | Responsibility |
 |---|---|
 | `app/` | Orchestrator: boot order, factory reset, network bring-up, housekeeping loop. Start here. |
-| `spi/` | SPI transport shared by the four MAX31865 front-ends. |
-| `max31865/` | MAX31865 RTD-to-digital converter driver (register access, fault status). |
-| `rtd/` | Acquisition + conversion: ADC code → resistance → temperature, range resolution, scan loop. |
-| `calstore/` | **Write-once** per-channel/per-range calibration store in Flash. Read this file before touching calibration. |
+| `spi/` | SPI1 transport (mode 1) shared by the four ADS1220 front-ends. |
+| `ads1220/` | ADS1220 driver: reset/config/RDATA, per-channel PGA gain, liveness check. Board wiring and register values are documented in its header. |
+| `rtd/` | Acquisition + conversion: 24-bit code → resistance → temperature, gain-class resolution, code-based fault detection, int16 view, scan loop. |
+| `calstore/` | **Write-once** per-channel/per-gain-class calibration store in Flash (20 slots). Read this file before touching calibration. |
 | `temp/` | On-chip MCU temperature sensor, exposed as IR126 / HR130. |
 | `modbus/modbus_app.c` | Register-map adapter. **The map is documented in the header comment of `modbus_app.h`.** |
 | `modbus/modbus_tcp_server.c` | Single-client TCP server on LwIP netconn. |
@@ -69,34 +70,37 @@ of which carry hand edits outside `USER CODE` guards (notably
 | `third_party/nanomodbus/` | Vendored protocol library. |
 
 ### Register map shape
-Unlike the discrete modules, readings are `float32` spread over two registers,
-**high word first** (`register[N]` = bits 31..16). Per-channel blocks:
+Multi-channel quantities are grouped **by quantity** (4 registers or 4 pairs =
+channels 0..3), not per channel. `float32` is two registers, **high word first**.
 
-- Readings (FC04): base `300 + ch*20` — temperature °C, calibrated Ω, raw Ω,
-  flags, raw 15-bit code, resolved range.
-- Config (FC03/06/16): base `500 + ch*10` — enabled, sensor type, alpha mode,
-  custom W100 ×10000, calibration range override, EMA smoothing level (0..3,
+- Compact block (FC03/06/16) `0..27`: `0..3` int16 reading (RO: °C×100, or
+  0..32767 of the resistance-mode full scale; 0 = disabled, −32768 = fault),
+  `4..7` type, `8..11` enabled, `12..15` alpha mode, `16..19` W100×10000,
+  `20..23` gain-class override (0 auto / 1..5), `24..27` EMA level (0..3,
   α = 1/4, 1/8, 1/16; applied to r_cal, raw values stay unfiltered).
-- Calibration coefficients (FC03/06/16): base `540 + ch*8` — gain/offset for the
-  low and high range.
-- Nominal reference resistors: `580..583`.
-- `IR127` = calibration lock bitmask, bit `(ch*2 + range)`.
+- Readings (FC04) `300..339`: temp f32 ×4, R_cal f32 ×4, R_raw f32 ×4,
+  flags ×4 (fault code in bits 15..8: 1 open, 2 short, 3 ADC dead), ADC code
+  int32 ×4, active gain class ×4.
+- Calibration coefficients (FC03/06/16): `540 + ch*20 + class*4` — gain, offset.
+- Nominal RREF: `620..621` (single, default 2000 Ω).
+- `IR127`/`IR128` = calibration lock bitmask, bit `ch*5 + class`.
 
-Temperature reads `NaN` for resistance-only modes and on fault.
+Temperature reads `NaN` for resistance-only modes and on fault. The int16
+resistance view is clamped to 32767 so `0x8000` stays reserved for fault.
 
 ## Invariants
 
 ### Calibration is irreversible — treat it as destructive
 
-`calstore/` implements a **write-once** store: each of the 8 (channel × range)
-slots can be committed exactly once, because internal Flash can only clear bits
+`calstore/` implements a **write-once** store: each of the 20 (channel × gain
+class) slots can be committed exactly once, because internal Flash can only clear bits
 without a full sector erase.
 
-- Modbus writes to `540 + ch*8` are a **live preview only**, and are rejected
-  once the slot is locked.
-- Committing is `HR131 = 0xCA00 | (ch*2 + range)`. **This is irreversible.**
+- Modbus writes to `540 + ch*20 + class*4` are a **live preview only**, and are
+  rejected once the slot is locked.
+- Committing is `HR131 = 0xCA00 | (ch*5 + class)`. **This is irreversible.**
 - The only undo is `calstore_erase()`, which wipes the whole sector and reverts
-  all 8 slots to neutral (gain 1.0, offset 0.0). It is deliberately gated behind
+  all 20 slots to neutral (gain 1.0, offset 0.0). It is deliberately gated behind
   two factors: arm with `HR132 = 0xC1A5`, then physically confirm with a button
   hold within 30 s (`CAL_ERASE_ARM_WINDOW_MS` / `CAL_ERASE_CONFIRM_MS`).
 - Never issue a commit or an erase while testing, and never add a code path that
@@ -108,8 +112,8 @@ Keep it that way.
 
 ### Single sources of truth
 - **Module identity** — `Application/fw_header/fw_header.h`:
-  `FW_PRODUCT_ID = 0x504C0403`, `FW_HW_REVISION = 0x0101`,
-  `FW_VERSION_VALUE = 0x0103`.
+  `FW_PRODUCT_ID = 0x504C0403`, `FW_HW_REVISION = 0x0201`,
+  `FW_VERSION_VALUE = 0x0200`.
 - **Firmware version over Modbus** — IR120/IR121 derive from `FW_VERSION_VALUE`.
 - **Register map** — the header comment of `modbus_app.h`, mirrored by the
   `MB_*` constants. Keep comment and constants in step.
@@ -120,14 +124,15 @@ Keep it that way.
 ### Version policy — bump the minor on every change
 
 **Mandatory.** Every change to firmware behaviour ships with `FW_VERSION_VALUE`
-in `fw_header.h` incremented by one minor (`0x0103` → `0x0104`). The version is
+in `fw_header.h` incremented by one minor (`0x0200` → `0x0201`). The version is
 the operator's only way to tell which build is running on a device in the field,
 so an un-bumped change is a defect.
 
 - Minor bump: any firmware-only change — fixes, features, register-map
   additions, timing or conversion-maths changes.
 - Major bump: only together with a `FW_HW_REVISION` major change (MCU pinout).
-  OTA requires `fw_version` major == `hw_revision` major.
+  OTA requires `fw_version` major == `hw_revision` major. HW2.1 (ADS1220
+  board) is exactly that case: hw `0x0201`, fw `0x0200`.
 - Pure documentation-only commits do not need a bump.
 
 Bump checklist — all three places, they drift easily:
@@ -146,8 +151,10 @@ an entry there in the same commit as the bump.
 | 11 | `0x080E0000` | Write-once calibration (`calstore.c`) |
 
 - `settings_t` layout is frozen; reordering or resizing requires bumping
-  `SETTINGS_VERSION` (currently 2, magic `0x04D14A57`). A mismatch silently
-  reverts deployed units to factory defaults.
+  `SETTINGS_VERSION` (currently 3, magic `0x04D14A57`). A mismatch silently
+  reverts deployed units to factory defaults. v3 kept the v2 layout but was
+  bumped because type codes 19/20 and the cal-override register changed
+  meaning (`rref_nominal[1]` became `reserved_f`).
 - The field is still named `use_dhcp` but holds a tri-state net mode
   (static / DHCP / link-local). Kept for on-flash compatibility.
 - `ch_smooth[]` (EMA level) repurposed the always-zero `reserved_a[]` bytes, so
@@ -166,7 +173,7 @@ an entry there in the same commit as the bump.
   housekeeping, never from the tcpip thread.
 - Any loop blocking longer than the IWDG period must call
   `HAL_IWDG_Refresh(&hiwdg)`. The calibration-sector erase is the worst offender.
-- All MAX31865 SPI access should stay on the RTD scan task.
+- All ADS1220 SPI access should stay on the RTD scan task.
 
 ### Boot order (`app_run()`)
 Two ordering constraints inherited from 12DI, both load-bearing:
@@ -190,6 +197,16 @@ Two ordering constraints inherited from 12DI, both load-bearing:
   space; the same value is also at IR126.
 - `float32` registers are high-word-first. Getting the word order wrong produces
   plausible-looking garbage rather than an obvious error.
+- ADS1220 has **no fault register**: open/short are inferred from the code
+  (`RTD_CODE_OPEN`, `RTD_SHORT_FRACTION` in `rtd_module.c`) and a dead
+  converter from a config-register readback mismatch. Resistance modes skip the
+  short check because 0 Ω is a valid input there.
+- Gain classes and their PGA codes live in one table (`s_gclass[]` in
+  `rtd_scales.c`) so the register value and the maths cannot drift. Pt500 at
+  850 °C is 97.6 % of the class-2 full scale — a deliberate trade-off.
+- DRDY is not wired; the ADC runs continuously at 20 SPS and `RDATA` returns
+  the latest result. A scan period below 50 ms re-reads the same sample.
+- SPI is **mode 1** (CPOL 0, CPHA 1). The MAX31865 needed mode 3.
 
 ## Parity with the other variants
 
@@ -206,7 +223,7 @@ Deliberately **not** aligned, because they are module-specific:
 - `settings.c/h` — RTD channel defaults instead of DI filter / DQ masks.
 - `ethernetif.c` — hostname is `PLCJS-ETH-4RTD`; only the `ksz8863_service()`
   wiring was taken from the reference.
-- Everything under `spi/`, `max31865/`, `rtd/`, `calstore/`, `temp/`.
+- Everything under `spi/`, `ads1220/`, `rtd/`, `calstore/`, `temp/`.
 
 Still, do not assume a shared file matches its sibling — diff it before relying
 on it.
@@ -246,8 +263,10 @@ Cross-repo contracts that must change in lockstep:
 - **`fw_header_t` layout, `FW_HEADER_OFFSET`, `BOOT_REQUEST_FLAG_ADDR`/`MAGIC`,
   flash map** — every firmware + bootloader + both linker scripts.
 - **product_id** — `fw_header.h` here and `scripts/variants.csv` in the
-  bootloader (`4rtd,0x504C0403`). `variants.csv` uses the 3-byte hw encoding
-  `0x010101`; firmware headers use the 2-byte `0x0101`.
+  bootloader (`4rtd,0x504C0403,0x020100`). `variants.csv` uses the 3-byte hw
+  encoding `0x020100`; firmware headers use the 2-byte `0x0201`. The bootloader
+  compares the major byte only, so HW1.x and HW2.x images are mutually
+  rejected.
 - **Register map changes** — `modbus_app.h` here and `build4RTD()` in
   `ModuleMaps.cpp`, or the tool shows stale registers.
 

@@ -8,28 +8,25 @@
 #include "rtd_module.h"
 
 #include <math.h>
+#include <stddef.h>
 
+#include "ads1220.h"
 #include "calstore.h"
 #include "main.h"
-#include "max31865.h"
 #include "rtd_scales.h"
 #include "settings.h"
 #include "stm32f4xx_hal.h"
 
-/* MAX31865 operating configuration (mirror of the driver default). */
-#define RTD_MAX_CONFIG \
-    (MAX31865_CFG_VBIAS | MAX31865_CFG_CONV_AUTO | MAX31865_CFG_3WIRE | MAX31865_CFG_FILT_50HZ)
-
-/* MAX31865 full-scale code (15-bit ratiometric). */
-#define RTD_ADC_FULL_SCALE      32768.0f
-
-/* Ticks (scan cycles) to ignore validity after a RANG range change. */
+/* Ticks (scan cycles) to ignore validity after a gain change / (re)start. */
 #define RTD_SETTLE_TICKS        3u
 
-/* RANG pin level that selects the HIGH reference-resistor range. If the board
- * turns out to have the opposite polarity, the calibration will read ~10x off
- * and this single constant is the only thing to flip. */
-#define RTD_RANG_LEVEL_HIGH     GPIO_PIN_SET
+/* Codes at or above this are treated as an open sensor / over-range: the
+ * IDAC has no return path, AIN0 is pulled to the supply and the PGA clips. */
+#define RTD_CODE_OPEN           0x7FF000
+
+/* An RTD reading below this fraction of R0 is a shorted sensor (Pt at −200 °C
+ * is still ~0.185·R0, copper at −180 °C ~0.22·R0). */
+#define RTD_SHORT_FRACTION      0.10f
 
 /* Channel status LED blink half-period on fault, ms. */
 #define RTD_FAULT_BLINK_MS      100u
@@ -38,13 +35,6 @@ typedef struct {
     GPIO_TypeDef* port;
     uint16_t      pin;
 } gpio_ref_t;
-
-static const gpio_ref_t s_rang[RTD_MODULE_CHANNEL_COUNT] = {
-    { RTD0_RANG_GPIO_Port, RTD0_RANG_Pin },
-    { RTD1_RANG_GPIO_Port, RTD1_RANG_Pin },
-    { RTD2_RANG_GPIO_Port, RTD2_RANG_Pin },
-    { RTD3_RANG_GPIO_Port, RTD3_RANG_Pin },
-};
 
 static const gpio_ref_t s_stat[RTD_MODULE_CHANNEL_COUNT] = {
     { RTD0_STAT_GPIO_Port, RTD0_STAT_Pin },
@@ -58,7 +48,7 @@ static rtd_channel_status_t s_status[RTD_MODULE_CHANNEL_COUNT];
 static uint8_t  s_type[RTD_MODULE_CHANNEL_COUNT];
 static bool     s_enabled[RTD_MODULE_CHANNEL_COUNT];
 static float    s_w100[RTD_MODULE_CHANNEL_COUNT];
-static uint8_t  s_range[RTD_MODULE_CHANNEL_COUNT];
+static uint8_t  s_gclass[RTD_MODULE_CHANNEL_COUNT];
 static uint8_t  s_cal_override[RTD_MODULE_CHANNEL_COUNT];
 static uint8_t  s_settle[RTD_MODULE_CHANNEL_COUNT];
 static uint16_t s_scan_ms = SETTINGS_DEF_SCAN_MS;
@@ -67,7 +57,7 @@ static uint16_t s_scan_ms = SETTINGS_DEF_SCAN_MS;
  * i.e. level 1/2/3 => 1/4, 1/8, 1/16. Applied to the calibrated resistance.
  * The filter state is seeded with the first valid sample and reset on fault,
  * settle and any configuration change, so it never mixes readings taken with
- * different ranges/types or drags a stale value after a sensor fault. */
+ * different gains/types or drags a stale value after a sensor fault. */
 static uint8_t  s_smooth[RTD_MODULE_CHANNEL_COUNT];
 static float    s_ema[RTD_MODULE_CHANNEL_COUNT];
 static bool     s_ema_seeded[RTD_MODULE_CHANNEL_COUNT];
@@ -76,47 +66,22 @@ static bool     s_ema_seeded[RTD_MODULE_CHANNEL_COUNT];
 static uint16_t s_blink_timer;
 static uint8_t  s_blink_on;
 
-static inline void rang_set(uint8_t ch, uint8_t range)
-{
-    const GPIO_PinState lvl = (range == RTD_RANGE_HIGH)
-                                ? RTD_RANG_LEVEL_HIGH
-                                : ((RTD_RANG_LEVEL_HIGH == GPIO_PIN_SET) ? GPIO_PIN_RESET : GPIO_PIN_SET);
-    HAL_GPIO_WritePin(s_rang[ch].port, s_rang[ch].pin, lvl);
-}
-
 static inline void stat_set(uint8_t ch, bool on)
 {
     HAL_GPIO_WritePin(s_stat[ch].port, s_stat[ch].pin,
                       on ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
 
-void rtd_module_init(void)
+static uint8_t resolve_gclass(uint8_t ch)
 {
-    max31865_init();
-
-    for (uint8_t ch = 0; ch < RTD_MODULE_CHANNEL_COUNT; ch++) {
-        s_cal_override[ch] = RTD_CAL_OVERRIDE_AUTO;
-        s_range[ch]        = 0xFFu;   /* force RANG write on first apply */
-        s_settle[ch]       = RTD_SETTLE_TICKS;
-        s_status[ch].temperature = NAN;
-        s_status[ch].r_raw = NAN;
-        s_status[ch].r_cal = NAN;
-        stat_set(ch, false);
+    const uint8_t ov = s_cal_override[ch];
+    if (ov >= 1u && ov <= RTD_CAL_OVERRIDE_MAX) {
+        return (uint8_t)(ov - 1u);
     }
-
-    rtd_module_apply_config();
+    return rtd_type_gclass(s_type[ch]);
 }
 
-static uint8_t resolve_range(uint8_t ch)
-{
-    switch (s_cal_override[ch]) {
-    case RTD_CAL_OVERRIDE_LOW:  return RTD_RANGE_LOW;
-    case RTD_CAL_OVERRIDE_HIGH: return RTD_RANGE_HIGH;
-    default:                    return rtd_type_range(s_type[ch]);
-    }
-}
-
-void rtd_module_apply_config(void)
+static void load_settings(void)
 {
     const settings_t* s = settings_get();
 
@@ -139,11 +104,41 @@ void rtd_module_apply_config(void)
         uint8_t smooth = s->ch_smooth[ch];
         if (smooth > SETTINGS_SMOOTH_MAX) { smooth = SETTINGS_SMOOTH_OFF; }
         s_smooth[ch] = smooth;
+    }
+}
 
-        const uint8_t range = resolve_range(ch);
-        if (range != s_range[ch]) {
-            rang_set(ch, range);
-            s_range[ch]  = range;
+void rtd_module_init(void)
+{
+    uint8_t gain_code[RTD_MODULE_CHANNEL_COUNT];
+
+    for (uint8_t ch = 0; ch < RTD_MODULE_CHANNEL_COUNT; ch++) {
+        s_cal_override[ch] = RTD_CAL_OVERRIDE_AUTO;
+        s_status[ch].temperature = NAN;
+        s_status[ch].r_raw = NAN;
+        s_status[ch].r_cal = NAN;
+        stat_set(ch, false);
+    }
+
+    load_settings();
+    for (uint8_t ch = 0; ch < RTD_MODULE_CHANNEL_COUNT; ch++) {
+        s_gclass[ch]     = resolve_gclass(ch);
+        s_settle[ch]     = RTD_SETTLE_TICKS;
+        s_ema_seeded[ch] = false;
+        gain_code[ch]    = rtd_gclass_gain_code(s_gclass[ch]);
+    }
+
+    ads1220_init(gain_code);
+}
+
+void rtd_module_apply_config(void)
+{
+    load_settings();
+
+    for (uint8_t ch = 0; ch < RTD_MODULE_CHANNEL_COUNT; ch++) {
+        const uint8_t gclass = resolve_gclass(ch);
+        if (gclass != s_gclass[ch]) {
+            ads1220_set_gain(ch, rtd_gclass_gain_code(gclass));
+            s_gclass[ch] = gclass;
             s_settle[ch] = RTD_SETTLE_TICKS;
         }
 
@@ -154,40 +149,70 @@ void rtd_module_apply_config(void)
     }
 }
 
+static void set_fault(rtd_channel_status_t* st, uint8_t ch, uint8_t code)
+{
+    st->fault        = true;
+    st->fault_code   = code;
+    st->valid        = false;
+    st->r_raw        = NAN;
+    st->r_cal        = NAN;
+    st->temperature  = NAN;
+    s_ema_seeded[ch] = false;   /* restart smoothing after the fault */
+}
+
 void rtd_module_tick(void)
 {
     const settings_t* s = settings_get();
 
     for (uint8_t ch = 0; ch < RTD_MODULE_CHANNEL_COUNT; ch++) {
         rtd_channel_status_t* st = &s_status[ch];
-        const uint8_t range = s_range[ch];
+        const uint8_t gclass = s_gclass[ch];
 
         st->enabled = s_enabled[ch];
-        st->range   = range;
+        st->gclass  = gclass;
 
-        uint16_t code = 0u;
-        const bool fault = max31865_read_rtd(ch, &code);
-        st->adc_code = code;
-
-        if (fault) {
-            st->fault      = true;
-            st->fault_code = max31865_read_fault(ch);
-            max31865_clear_fault(ch, RTD_MAX_CONFIG);
-            st->valid        = false;
-            st->r_raw        = NAN;
-            st->r_cal        = NAN;
-            st->temperature  = NAN;
-            s_ema_seeded[ch] = false;   /* restart smoothing after the fault */
+        if (!st->enabled) {
+            st->fault       = false;
+            st->fault_code  = RTD_FAULT_NONE;
+            st->valid       = false;
+            st->adc_code    = 0;
+            st->r_raw       = NAN;
+            st->r_cal       = NAN;
+            st->temperature = NAN;
+            s_ema_seeded[ch] = false;
             continue;
         }
 
-        st->fault      = false;
-        st->fault_code = 0u;
+        int32_t code = 0;
+        const bool alive = ads1220_read_data(ch, &code);
+        st->adc_code = code;
 
-        const float ratio = (float)code / RTD_ADC_FULL_SCALE;
-        const float rref  = s->rref_nominal[range];
-        const float r_raw = ratio * rref;
-        float       r_cal = calstore_gain(ch, range) * r_raw + calstore_offset(ch, range);
+        if (!alive) {
+            set_fault(st, ch, RTD_FAULT_ADC);
+            continue;
+        }
+        if (code >= RTD_CODE_OPEN) {
+            set_fault(st, ch, RTD_FAULT_OPEN);
+            continue;
+        }
+
+        /* Ratiometric: V_in = I·R, V_ref = 2·I·RREF  =>  R = ratio·2·RREF/gain. */
+        const float ratio = (float)code / ADS1220_FULL_SCALE;
+        const float r_raw = ratio * 2.0f * s->rref_nominal / rtd_gclass_gain(gclass);
+        float       r_cal = calstore_gain(ch, gclass) * r_raw + calstore_offset(ch, gclass);
+
+        const rtd_type_info_t* ti = rtd_type_info(s_type[ch]);
+        const bool is_res = (ti != NULL) && (ti->material == RTD_MAT_RES);
+        if (!is_res && ti != NULL && r_cal < RTD_SHORT_FRACTION * ti->r0) {
+            set_fault(st, ch, RTD_FAULT_SHORT);
+            continue;
+        }
+        if (is_res && r_cal < 0.0f) {
+            r_cal = 0.0f;   /* noise around a genuine 0 Ω input */
+        }
+
+        st->fault      = false;
+        st->fault_code = RTD_FAULT_NONE;
 
         if (s_settle[ch] > 0u) {
             s_settle[ch]--;
@@ -215,13 +240,33 @@ void rtd_module_tick(void)
 
         /* Temperature is only meaningful for RTD scales in normal (non-cal)
          * operation. Resistance modes and calibration overrides report NaN. */
-        if (s_cal_override[ch] != RTD_CAL_OVERRIDE_AUTO ||
-            rtd_type_is_resistance(s_type[ch])) {
+        if (s_cal_override[ch] != RTD_CAL_OVERRIDE_AUTO || is_res) {
             st->temperature = NAN;
         } else {
             st->temperature = rtd_resistance_to_temperature(s_type[ch], s_w100[ch], r_cal);
         }
     }
+}
+
+int16_t rtd_module_int16_view(uint8_t ch)
+{
+    if (ch >= RTD_MODULE_CHANNEL_COUNT) { return RTD_I16_DISABLED; }
+    const rtd_channel_status_t* st = &s_status[ch];
+
+    if (!st->enabled) { return RTD_I16_DISABLED; }
+    if (st->fault || !st->valid) { return RTD_I16_FAULT; }
+
+    const rtd_type_info_t* ti = rtd_type_info(s_type[ch]);
+    float v;
+    if (ti != NULL && ti->material == RTD_MAT_RES) {
+        v = st->r_cal / ti->r0 * 32768.0f;      /* r0 = mode full scale */
+    } else {
+        if (isnan(st->temperature)) { return RTD_I16_FAULT; }
+        v = st->temperature * 100.0f;
+    }
+    if (v >  32767.0f) { v =  32767.0f; }
+    if (v < -32767.0f) { v = -32767.0f; }
+    return (int16_t)lroundf(v);
 }
 
 void rtd_module_led_tick(uint16_t period_ms)
@@ -255,11 +300,11 @@ uint16_t rtd_module_scan_period_ms(void)
 
 void rtd_module_set_cal_override(uint8_t ch, uint8_t override)
 {
-    if (ch >= RTD_MODULE_CHANNEL_COUNT || override > RTD_CAL_OVERRIDE_HIGH) {
+    if (ch >= RTD_MODULE_CHANNEL_COUNT || override > RTD_CAL_OVERRIDE_MAX) {
         return;
     }
     s_cal_override[ch] = override;
-    rtd_module_apply_config();   /* re-resolve range / RANG pin */
+    rtd_module_apply_config();   /* re-resolve the gain class */
 }
 
 uint8_t rtd_module_get_cal_override(uint8_t ch)

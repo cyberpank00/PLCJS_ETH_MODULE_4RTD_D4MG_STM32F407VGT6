@@ -2,8 +2,8 @@
   ******************************************************************************
   * @file    settings.h
   * @brief   Persistent settings stored in internal Flash with CRC32 protection.
-  *          4RTD variant: network + per-channel RTD configuration + per-channel
-  *          per-range 2-point calibration coefficients.
+  *          4RTD variant: network + per-channel RTD configuration. Calibration
+  *          lives in the write-once calstore, not here.
   ******************************************************************************
   */
 #ifndef APPLICATION_SETTINGS_H
@@ -19,11 +19,13 @@ extern "C" {
 /* Magic and version --------------------------------------------------------- */
 #define SETTINGS_MAGIC          0x04D14A57u
 /* v2: calibration coefficients moved to the dedicated write-once calstore
- * (see calstore.h); cal_gain/cal_offset removed from this structure. */
-#define SETTINGS_VERSION        2u
+ * (see calstore.h); cal_gain/cal_offset removed from this structure.
+ * v3: HW2.1 (ADS1220) — sensor-type codes 19/20 and the cal-override register
+ * changed meaning, single RREF. Layout unchanged; the bump forces defaults so
+ * a v2 image is never interpreted with the new semantics. */
+#define SETTINGS_VERSION        3u
 
 #define SETTINGS_RTD_CHANNELS   4u
-#define SETTINGS_RTD_RANGES     2u
 
 /* Defaults ------------------------------------------------------------------ */
 #define SETTINGS_DEF_SCAN_MS       250u
@@ -70,11 +72,11 @@ extern "C" {
 #define SETTINGS_SMOOTH_MAX         3u
 #define SETTINGS_DEF_CH_SMOOTH      SETTINGS_SMOOTH_OFF
 
-/* Nominal reference resistors (Ω) for the two RANG positions. These are only
- * starting estimates; the per-channel/per-range calibration removes the real
- * RREF error and the analog-switch on-resistance. */
-#define SETTINGS_DEF_RREF_LOW       400.0f
-#define SETTINGS_DEF_RREF_HIGH      4000.0f
+/* Nominal reference resistor (Ω) in the IDAC return path (R41, 2 kΩ 0.1 %).
+ * Both excitation currents flow through it, so V_REF = 2·I·RREF. This is only
+ * a starting estimate; the per-channel/per-gain-class calibration removes the
+ * real RREF error and the PGA gain error. */
+#define SETTINGS_DEF_RREF           2000.0f
 
 /* LED mode codes ------------------------------------------------------------ */
 typedef enum {
@@ -116,8 +118,9 @@ typedef struct {
      * NOT stored here. It lives in the write-once calstore (calstore.h) in its
      * own Flash sector so it survives factory reset and can be locked. */
 
-    /* Nominal RREF (Ω) per range (low, high). */
-    float    rref_nominal[SETTINGS_RTD_RANGES];
+    /* Nominal RREF (Ω). reserved_f keeps the v2 footprint (was RREF high). */
+    float    rref_nominal;
+    float    reserved_f;
 
     char     name[16];              /* device name, NUL-padded (discovery)    */
 

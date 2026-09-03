@@ -118,51 +118,37 @@ static float float_set_word(float f, uint8_t word, uint16_t v)
     return o;
 }
 
-/* Modbus calibration slot codes (register 540+ layout) map 1:1 onto the
- * calstore slot codes: 0 gain-low, 1 offset-low, 2 gain-high, 3 offset-high.
- * The (channel, range) pair for a slot is (ch, slot >> 1). */
-
 /* ---------------------------------------------------------------------------
  * Address-range helpers.
  * ------------------------------------------------------------------------- */
-static bool in_rtd_ir(uint16_t a, uint8_t* ch, uint8_t* off)
+/* Compact block 0..27: address = group*4 + ch. */
+static bool in_ch_block(uint16_t a, uint8_t* group, uint8_t* ch)
 {
-    if (a < MB_IR_RTD_BASE) { return false; }
-    const uint16_t rel = (uint16_t)(a - MB_IR_RTD_BASE);
-    if (rel >= MB_RTD_CHANNELS * MB_IR_RTD_STRIDE) { return false; }
-    *ch  = (uint8_t)(rel / MB_IR_RTD_STRIDE);
-    *off = (uint8_t)(rel % MB_IR_RTD_STRIDE);
+    if (a >= MB_HR_CH_BASE + MB_HR_CH_GROUPS * MB_RTD_CHANNELS) { return false; }
+    const uint16_t rel = (uint16_t)(a - MB_HR_CH_BASE);
+    *group = (uint8_t)(rel / MB_RTD_CHANNELS);
+    *ch    = (uint8_t)(rel % MB_RTD_CHANNELS);
     return true;
 }
 
-static bool in_rtd_cfg(uint16_t a, uint8_t* ch, uint8_t* off)
-{
-    if (a < MB_HR_RTD_CFG_BASE) { return false; }
-    const uint16_t rel = (uint16_t)(a - MB_HR_RTD_CFG_BASE);
-    if (rel >= MB_RTD_CHANNELS * MB_HR_RTD_CFG_STRIDE) { return false; }
-    *ch  = (uint8_t)(rel / MB_HR_RTD_CFG_STRIDE);
-    *off = (uint8_t)(rel % MB_HR_RTD_CFG_STRIDE);
-    return true;
-}
-
-static bool in_rtd_cal(uint16_t a, uint8_t* ch, uint8_t* slot, uint8_t* word)
+/* Calibration block 540 + ch*20 + class*4 + {gain w0, gain w1, off w0, off w1}. */
+static bool in_rtd_cal(uint16_t a, uint8_t* ch, uint8_t* gclass, bool* is_offset, uint8_t* word)
 {
     if (a < MB_HR_RTD_CAL_BASE) { return false; }
     const uint16_t rel = (uint16_t)(a - MB_HR_RTD_CAL_BASE);
     if (rel >= MB_RTD_CHANNELS * MB_HR_RTD_CAL_STRIDE) { return false; }
-    *ch   = (uint8_t)(rel / MB_HR_RTD_CAL_STRIDE);
+    *ch        = (uint8_t)(rel / MB_HR_RTD_CAL_STRIDE);
     const uint8_t idx = (uint8_t)(rel % MB_HR_RTD_CAL_STRIDE);
-    *slot = (uint8_t)(idx / 2u);
-    *word = (uint8_t)(idx & 1u);
+    *gclass    = (uint8_t)(idx / 4u);
+    *is_offset = ((idx / 2u) & 1u) != 0u;
+    *word      = (uint8_t)(idx & 1u);
     return true;
 }
 
-static bool in_rref(uint16_t a, uint8_t* range, uint8_t* word)
+static bool in_rref(uint16_t a, uint8_t* word)
 {
-    if (a < MB_HR_RREF_BASE || a > (uint16_t)(MB_HR_RREF_BASE + 3u)) { return false; }
-    const uint16_t rel = (uint16_t)(a - MB_HR_RREF_BASE);
-    *range = (uint8_t)(rel / 2u);
-    *word  = (uint8_t)(rel & 1u);
+    if (a < MB_HR_RREF_BASE || a > (uint16_t)(MB_HR_RREF_BASE + 1u)) { return false; }
+    *word = (uint8_t)(a - MB_HR_RREF_BASE);
     return true;
 }
 
@@ -171,18 +157,27 @@ static bool in_rref(uint16_t a, uint8_t* range, uint8_t* word)
  * ------------------------------------------------------------------------- */
 static uint16_t read_input(uint16_t address)
 {
-    uint8_t ch, off;
-    if (in_rtd_ir(address, &ch, &off)) {
-        const rtd_channel_status_t* st = rtd_module_get_status(ch);
-        if (st == NULL) { return 0u; }
-        switch (off) {
-        case MB_IR_RTD_TEMP_OFF + 0u: return float_word(st->temperature, 0u);
-        case MB_IR_RTD_TEMP_OFF + 1u: return float_word(st->temperature, 1u);
-        case MB_IR_RTD_RCAL_OFF + 0u: return float_word(st->r_cal, 0u);
-        case MB_IR_RTD_RCAL_OFF + 1u: return float_word(st->r_cal, 1u);
-        case MB_IR_RTD_RRAW_OFF + 0u: return float_word(st->r_raw, 0u);
-        case MB_IR_RTD_RRAW_OFF + 1u: return float_word(st->r_raw, 1u);
-        case MB_IR_RTD_FLAGS_OFF: {
+    if (address >= MB_IR_RTD_BASE && address < MB_IR_RTD_END) {
+        /* Grouped layout: float/int32 groups hold 2 registers per channel. */
+        uint8_t ch, word = 0u;
+        const rtd_channel_status_t* st;
+
+        if (address < MB_IR_RTD_FLAGS) {
+            const uint16_t rel = (uint16_t)(address - MB_IR_RTD_TEMP);
+            const uint16_t grp = (uint16_t)(rel / (2u * MB_RTD_CHANNELS));
+            ch   = (uint8_t)((rel % (2u * MB_RTD_CHANNELS)) / 2u);
+            word = (uint8_t)(rel & 1u);
+            st = rtd_module_get_status(ch);
+            if (st == NULL) { return 0u; }
+            switch (grp) {
+            case 0:  return float_word(st->temperature, word);
+            case 1:  return float_word(st->r_cal, word);
+            default: return float_word(st->r_raw, word);
+            }
+        }
+        if (address < MB_IR_RTD_CODE) {
+            st = rtd_module_get_status((uint8_t)(address - MB_IR_RTD_FLAGS));
+            if (st == NULL) { return 0u; }
             uint16_t f = 0u;
             if (st->enabled) { f |= MB_RTD_FLAG_ENABLED; }
             if (st->valid)   { f |= MB_RTD_FLAG_VALID; }
@@ -190,10 +185,15 @@ static uint16_t read_input(uint16_t address)
             f |= (uint16_t)((uint16_t)st->fault_code << 8);
             return f;
         }
-        case MB_IR_RTD_CODE_OFF:  return st->adc_code;
-        case MB_IR_RTD_RANGE_OFF: return st->range;
-        default:                  return 0u;
+        if (address < MB_IR_RTD_GCLASS) {
+            const uint16_t rel = (uint16_t)(address - MB_IR_RTD_CODE);
+            st = rtd_module_get_status((uint8_t)(rel / 2u));
+            if (st == NULL) { return 0u; }
+            const uint32_t u = (uint32_t)st->adc_code;
+            return ((rel & 1u) == 0u) ? (uint16_t)(u >> 16) : (uint16_t)(u & 0xFFFFu);
         }
+        st = rtd_module_get_status((uint8_t)(address - MB_IR_RTD_GCLASS));
+        return (st != NULL) ? st->gclass : 0u;
     }
 
     switch (address) {
@@ -203,17 +203,15 @@ static uint16_t read_input(uint16_t address)
     case MB_IR_UPTIME_HI:    return (uint16_t)(((HAL_GetTick() / 1000u) >> 16u) & 0xFFFFu);
     case MB_IR_MODULE_ID:    return MODULE_ID_04RTD;
     case MB_IR_TEMPERATURE:  return (uint16_t)temp_module_read_decicelsius();
-    case MB_IR_CAL_LOCK:     return calstore_lock_mask();
+    case MB_IR_CAL_LOCK:     return (uint16_t)(calstore_lock_mask() & 0xFFFFu);
+    case MB_IR_CAL_LOCK_HI:  return (uint16_t)(calstore_lock_mask() >> 16);
     default:                 return 0u;
     }
 }
 
 static bool input_address_valid(uint16_t address)
 {
-    uint8_t ch, off;
-    if (in_rtd_ir(address, &ch, &off)) {
-        return off < MB_IR_RTD_SPAN;
-    }
+    if (address >= MB_IR_RTD_BASE && address < MB_IR_RTD_END) { return true; }
     switch (address) {
     case MB_IR_FW_VER_MAJOR:
     case MB_IR_FW_VER_MINOR:
@@ -222,6 +220,7 @@ static bool input_address_valid(uint16_t address)
     case MB_IR_MODULE_ID:
     case MB_IR_TEMPERATURE:
     case MB_IR_CAL_LOCK:
+    case MB_IR_CAL_LOCK_HI:
         return true;
     default:
         return false;
@@ -232,24 +231,27 @@ static uint16_t read_holding(uint16_t address)
 {
     settings_t* s = settings_get();
 
-    uint8_t ch, off, slot, word, range;
+    uint8_t group, ch, gclass, word;
+    bool is_offset;
 
-    if (in_rtd_cfg(address, &ch, &off)) {
-        switch (off) {
-        case MB_HR_RTD_CFG_ENABLED:    return s->ch_enabled[ch];
-        case MB_HR_RTD_CFG_TYPE:       return s->ch_type[ch];
-        case MB_HR_RTD_CFG_ALPHA_MODE: return s->ch_alpha_mode[ch];
-        case MB_HR_RTD_CFG_W100:       return s->ch_custom_w100[ch];
-        case MB_HR_RTD_CFG_CALRANGE:   return rtd_module_get_cal_override(ch);
-        case MB_HR_RTD_CFG_SMOOTH:     return s->ch_smooth[ch];
-        default:                       return 0u;
+    if (in_ch_block(address, &group, &ch)) {
+        switch (group) {
+        case MB_HR_CH_GROUP_READING:    return (uint16_t)rtd_module_int16_view(ch);
+        case MB_HR_CH_GROUP_TYPE:       return s->ch_type[ch];
+        case MB_HR_CH_GROUP_ENABLED:    return s->ch_enabled[ch];
+        case MB_HR_CH_GROUP_ALPHA_MODE: return s->ch_alpha_mode[ch];
+        case MB_HR_CH_GROUP_W100:       return s->ch_custom_w100[ch];
+        case MB_HR_CH_GROUP_CALOVR:     return rtd_module_get_cal_override(ch);
+        case MB_HR_CH_GROUP_SMOOTH:     return s->ch_smooth[ch];
+        default:                        return 0u;
         }
     }
-    if (in_rtd_cal(address, &ch, &slot, &word)) {
-        return float_word(calstore_get_coeff(ch, slot), word);
+    if (in_rtd_cal(address, &ch, &gclass, &is_offset, &word)) {
+        const float v = is_offset ? calstore_offset(ch, gclass) : calstore_gain(ch, gclass);
+        return float_word(v, word);
     }
-    if (in_rref(address, &range, &word)) {
-        return float_word(s->rref_nominal[range], word);
+    if (in_rref(address, &word)) {
+        return float_word(s->rref_nominal, word);
     }
 
     switch (address) {
@@ -294,30 +296,33 @@ static nmbs_error apply_holding_write(uint16_t address, uint16_t value)
 {
     settings_t* s = settings_get();
 
-    uint8_t ch, off, slot, word, range;
+    uint8_t group, ch, gclass, word;
+    bool is_offset;
 
-    if (in_rtd_cfg(address, &ch, &off)) {
-        switch (off) {
-        case MB_HR_RTD_CFG_ENABLED:
-            if (value > 1u) { return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE; }
-            s->ch_enabled[ch] = (uint8_t)value;
-            break;
-        case MB_HR_RTD_CFG_TYPE:
+    if (in_ch_block(address, &group, &ch)) {
+        switch (group) {
+        case MB_HR_CH_GROUP_READING:
+            return NMBS_EXCEPTION_ILLEGAL_DATA_ADDRESS;   /* read-only */
+        case MB_HR_CH_GROUP_TYPE:
             if (value >= RTD_TYPE_COUNT) { return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE; }
             s->ch_type[ch] = (uint8_t)value;
             break;
-        case MB_HR_RTD_CFG_ALPHA_MODE:
+        case MB_HR_CH_GROUP_ENABLED:
+            if (value > 1u) { return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE; }
+            s->ch_enabled[ch] = (uint8_t)value;
+            break;
+        case MB_HR_CH_GROUP_ALPHA_MODE:
             if (value > 1u) { return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE; }
             s->ch_alpha_mode[ch] = (uint8_t)value;
             break;
-        case MB_HR_RTD_CFG_W100:
+        case MB_HR_CH_GROUP_W100:
             s->ch_custom_w100[ch] = value;
             break;
-        case MB_HR_RTD_CFG_CALRANGE:
-            if (value > RTD_CAL_OVERRIDE_HIGH) { return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE; }
+        case MB_HR_CH_GROUP_CALOVR:
+            if (value > RTD_CAL_OVERRIDE_MAX) { return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE; }
             rtd_module_set_cal_override(ch, (uint8_t)value);
             return NMBS_ERROR_NONE;   /* override handles its own apply */
-        case MB_HR_RTD_CFG_SMOOTH:
+        case MB_HR_CH_GROUP_SMOOTH:
             if (value > SETTINGS_SMOOTH_MAX) { return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE; }
             s->ch_smooth[ch] = (uint8_t)value;
             break;
@@ -328,20 +333,20 @@ static nmbs_error apply_holding_write(uint16_t address, uint16_t value)
         return NMBS_ERROR_NONE;
     }
 
-    if (in_rtd_cal(address, &ch, &slot, &word)) {
+    if (in_rtd_cal(address, &ch, &gclass, &is_offset, &word)) {
         /* Write-once: reject any change to an already committed slot. */
-        if (calstore_is_locked(ch, (uint8_t)(slot >> 1))) {
+        if (calstore_is_locked(ch, gclass)) {
             return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE;
         }
-        const float patched = float_set_word(calstore_get_coeff(ch, slot), word, value);
-        if (!calstore_set_coeff(ch, slot, patched)) {
-            return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE;
-        }
-        return NMBS_ERROR_NONE;
+        const float cur     = is_offset ? calstore_offset(ch, gclass) : calstore_gain(ch, gclass);
+        const float patched = float_set_word(cur, word, value);
+        const bool  ok      = is_offset ? calstore_set_offset(ch, gclass, patched)
+                                        : calstore_set_gain(ch, gclass, patched);
+        return ok ? NMBS_ERROR_NONE : NMBS_EXCEPTION_ILLEGAL_DATA_VALUE;
     }
 
-    if (in_rref(address, &range, &word)) {
-        s->rref_nominal[range] = float_set_word(s->rref_nominal[range], word, value);
+    if (in_rref(address, &word)) {
+        s->rref_nominal = float_set_word(s->rref_nominal, word, value);
         return NMBS_ERROR_NONE;
     }
 
@@ -415,14 +420,14 @@ static nmbs_error apply_holding_write(uint16_t address, uint16_t value)
         if ((value & ~MB_CAL_COMMIT_SLOT_MASK) != MB_CAL_COMMIT_BASE) {
             return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE;
         }
-        const uint8_t sel = (uint8_t)(value & MB_CAL_COMMIT_SLOT_MASK); /* ch*2+range */
-        const uint8_t cch = (uint8_t)(sel / SETTINGS_RTD_RANGES);
-        const uint8_t rng = (uint8_t)(sel % SETTINGS_RTD_RANGES);
-        if (cch >= SETTINGS_RTD_CHANNELS) {
+        const uint8_t sel = (uint8_t)(value & MB_CAL_COMMIT_SLOT_MASK); /* ch*5+class */
+        const uint8_t cch = (uint8_t)(sel / MB_RTD_GCLASSES);
+        const uint8_t cls = (uint8_t)(sel % MB_RTD_GCLASSES);
+        if (cch >= MB_RTD_CHANNELS) {
             return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE;
         }
         /* One-shot: fails if already locked or on Flash error. */
-        if (!calstore_commit(cch, rng)) {
+        if (!calstore_commit(cch, cls)) {
             return NMBS_EXCEPTION_ILLEGAL_DATA_VALUE;
         }
         break;
@@ -448,10 +453,11 @@ static nmbs_error apply_holding_write(uint16_t address, uint16_t value)
 
 static bool holding_address_valid(uint16_t address)
 {
-    uint8_t a, b, c;
-    if (in_rtd_cfg(address, &a, &b))       { return b < MB_HR_RTD_CFG_SPAN; }
-    if (in_rtd_cal(address, &a, &b, &c))   { return true; }
-    if (in_rref(address, &a, &b))          { return true; }
+    uint8_t a, b, d;
+    bool c;
+    if (in_ch_block(address, &a, &b))          { return true; }
+    if (in_rtd_cal(address, &a, &b, &c, &d))   { return true; }
+    if (in_rref(address, &d))                  { return true; }
 
     if (address >= MB_HR_RTD_SCAN_MS && address <= MB_HR_USE_DHCP) { return true; }
     if (address == MB_HR_TRIG_SAVE || address == MB_HR_TRIG_REBOOT ||

@@ -10,6 +10,8 @@
 #include <math.h>
 #include <stddef.h>
 
+#include "ads1220.h"
+
 /* Platinum Callendar–Van Dusen (α, δ, β) constants. */
 #define PT_IEC_DELTA    1.49990f
 #define PT_IEC_BETA     0.10863f
@@ -30,28 +32,39 @@
  * Type table — order MUST match rtd_type_t.
  * ------------------------------------------------------------------------- */
 static const rtd_type_info_t s_types[RTD_TYPE_COUNT] = {
-    /* name       material     r0     w100    k1(δ/β)         k2(β)        range */
-    { "50M",    RTD_MAT_CU,   50.0f, 1.4280f, CU_SUBZERO_BETA, 0.0f,        RTD_RANGE_LOW  },
-    { "Cu50",   RTD_MAT_CU,   50.0f, 1.4260f, CU_SUBZERO_BETA, 0.0f,        RTD_RANGE_LOW  },
-    { "50P",    RTD_MAT_PT,   50.0f, 1.3910f, PT_GOST_DELTA,   PT_GOST_BETA, RTD_RANGE_LOW  },
-    { "Pt50",   RTD_MAT_PT,   50.0f, 1.3851f, PT_IEC_DELTA,    PT_IEC_BETA,  RTD_RANGE_LOW  },
-    { "Ni100",  RTD_MAT_NI,  100.0f, 1.6180f, 0.0f,            0.0f,         RTD_RANGE_LOW  },
-    { "100M",   RTD_MAT_CU,  100.0f, 1.4280f, CU_SUBZERO_BETA, 0.0f,        RTD_RANGE_LOW  },
-    { "Cu100",  RTD_MAT_CU,  100.0f, 1.4260f, CU_SUBZERO_BETA, 0.0f,        RTD_RANGE_LOW  },
-    { "100P",   RTD_MAT_PT,  100.0f, 1.3910f, PT_GOST_DELTA,   PT_GOST_BETA, RTD_RANGE_LOW  },
-    { "Pt100",  RTD_MAT_PT,  100.0f, 1.3851f, PT_IEC_DELTA,    PT_IEC_BETA,  RTD_RANGE_LOW  },
-    { "Ni500",  RTD_MAT_NI,  500.0f, 1.6180f, 0.0f,            0.0f,         RTD_RANGE_HIGH },
-    { "500M",   RTD_MAT_CU,  500.0f, 1.4280f, CU_SUBZERO_BETA, 0.0f,        RTD_RANGE_HIGH },
-    { "Cu500",  RTD_MAT_CU,  500.0f, 1.4260f, CU_SUBZERO_BETA, 0.0f,        RTD_RANGE_HIGH },
-    { "500P",   RTD_MAT_PT,  500.0f, 1.3910f, PT_GOST_DELTA,   PT_GOST_BETA, RTD_RANGE_HIGH },
-    { "Pt500",  RTD_MAT_PT,  500.0f, 1.3851f, PT_IEC_DELTA,    PT_IEC_BETA,  RTD_RANGE_HIGH },
-    { "Ni1000", RTD_MAT_NI, 1000.0f, 1.6180f, 0.0f,            0.0f,         RTD_RANGE_HIGH },
-    { "1000M",  RTD_MAT_CU, 1000.0f, 1.4280f, CU_SUBZERO_BETA, 0.0f,        RTD_RANGE_HIGH },
-    { "Cu1000", RTD_MAT_CU, 1000.0f, 1.4260f, CU_SUBZERO_BETA, 0.0f,        RTD_RANGE_HIGH },
-    { "1000P",  RTD_MAT_PT, 1000.0f, 1.3910f, PT_GOST_DELTA,   PT_GOST_BETA, RTD_RANGE_HIGH },
-    { "Pt1000", RTD_MAT_PT, 1000.0f, 1.3851f, PT_IEC_DELTA,    PT_IEC_BETA,  RTD_RANGE_HIGH },
-    { "R2k",    RTD_MAT_RES, 2000.0f, 1.0f,   0.0f,            0.0f,         RTD_RANGE_HIGH },
-    { "R5k",    RTD_MAT_RES, 5000.0f, 1.0f,   0.0f,            0.0f,         RTD_RANGE_HIGH },
+    /* name       material     r0     w100    k1(δ/β)         k2(β)        gain class */
+    { "50M",    RTD_MAT_CU,   50.0f, 1.4280f, CU_SUBZERO_BETA, 0.0f,        RTD_GCLASS_50   },
+    { "Cu50",   RTD_MAT_CU,   50.0f, 1.4260f, CU_SUBZERO_BETA, 0.0f,        RTD_GCLASS_50   },
+    { "50P",    RTD_MAT_PT,   50.0f, 1.3910f, PT_GOST_DELTA,   PT_GOST_BETA, RTD_GCLASS_50   },
+    { "Pt50",   RTD_MAT_PT,   50.0f, 1.3851f, PT_IEC_DELTA,    PT_IEC_BETA,  RTD_GCLASS_50   },
+    { "Ni100",  RTD_MAT_NI,  100.0f, 1.6180f, 0.0f,            0.0f,         RTD_GCLASS_100  },
+    { "100M",   RTD_MAT_CU,  100.0f, 1.4280f, CU_SUBZERO_BETA, 0.0f,        RTD_GCLASS_100  },
+    { "Cu100",  RTD_MAT_CU,  100.0f, 1.4260f, CU_SUBZERO_BETA, 0.0f,        RTD_GCLASS_100  },
+    { "100P",   RTD_MAT_PT,  100.0f, 1.3910f, PT_GOST_DELTA,   PT_GOST_BETA, RTD_GCLASS_100  },
+    { "Pt100",  RTD_MAT_PT,  100.0f, 1.3851f, PT_IEC_DELTA,    PT_IEC_BETA,  RTD_GCLASS_100  },
+    { "Ni500",  RTD_MAT_NI,  500.0f, 1.6180f, 0.0f,            0.0f,         RTD_GCLASS_500  },
+    { "500M",   RTD_MAT_CU,  500.0f, 1.4280f, CU_SUBZERO_BETA, 0.0f,        RTD_GCLASS_500  },
+    { "Cu500",  RTD_MAT_CU,  500.0f, 1.4260f, CU_SUBZERO_BETA, 0.0f,        RTD_GCLASS_500  },
+    { "500P",   RTD_MAT_PT,  500.0f, 1.3910f, PT_GOST_DELTA,   PT_GOST_BETA, RTD_GCLASS_500  },
+    { "Pt500",  RTD_MAT_PT,  500.0f, 1.3851f, PT_IEC_DELTA,    PT_IEC_BETA,  RTD_GCLASS_500  },
+    { "Ni1000", RTD_MAT_NI, 1000.0f, 1.6180f, 0.0f,            0.0f,         RTD_GCLASS_1000 },
+    { "1000M",  RTD_MAT_CU, 1000.0f, 1.4280f, CU_SUBZERO_BETA, 0.0f,        RTD_GCLASS_1000 },
+    { "Cu1000", RTD_MAT_CU, 1000.0f, 1.4260f, CU_SUBZERO_BETA, 0.0f,        RTD_GCLASS_1000 },
+    { "1000P",  RTD_MAT_PT, 1000.0f, 1.3910f, PT_GOST_DELTA,   PT_GOST_BETA, RTD_GCLASS_1000 },
+    { "Pt1000", RTD_MAT_PT, 1000.0f, 1.3851f, PT_IEC_DELTA,    PT_IEC_BETA,  RTD_GCLASS_1000 },
+    { "R200",   RTD_MAT_RES,  200.0f, 1.0f,   0.0f,            0.0f,         RTD_GCLASS_100  },
+    { "R2k",    RTD_MAT_RES, 2000.0f, 1.0f,   0.0f,            0.0f,         RTD_GCLASS_2000 },
+};
+
+/* ADS1220 PGA gain per class — index = RTD_GCLASS_*. Kept as code + numeric
+ * pair so the acquisition maths and the register value cannot drift apart. */
+typedef struct { uint8_t code; float gain; } gclass_gain_t;
+static const gclass_gain_t s_gclass[RTD_GCLASS_COUNT] = {
+    { ADS1220_GAIN_16, 16.0f },   /* 50 Ω   : FS 250 Ω  */
+    { ADS1220_GAIN_8,   8.0f },   /* 100 Ω  : FS 500 Ω  */
+    { ADS1220_GAIN_2,   2.0f },   /* 500 Ω  : FS 2000 Ω */
+    { ADS1220_GAIN_1,   1.0f },   /* 1000 Ω : FS 4000 Ω */
+    { ADS1220_GAIN_1,   1.0f },   /* R 2 kΩ : FS 4000 Ω */
 };
 
 const rtd_type_info_t* rtd_type_info(uint8_t type)
@@ -59,10 +72,20 @@ const rtd_type_info_t* rtd_type_info(uint8_t type)
     return (type < RTD_TYPE_COUNT) ? &s_types[type] : NULL;
 }
 
-uint8_t rtd_type_range(uint8_t type)
+uint8_t rtd_type_gclass(uint8_t type)
 {
     const rtd_type_info_t* t = rtd_type_info(type);
-    return (t != NULL) ? t->range : RTD_RANGE_HIGH;
+    return (t != NULL) ? t->gclass : RTD_GCLASS_2000;
+}
+
+uint8_t rtd_gclass_gain_code(uint8_t gclass)
+{
+    return (gclass < RTD_GCLASS_COUNT) ? s_gclass[gclass].code : ADS1220_GAIN_1;
+}
+
+float rtd_gclass_gain(uint8_t gclass)
+{
+    return (gclass < RTD_GCLASS_COUNT) ? s_gclass[gclass].gain : 1.0f;
 }
 
 bool rtd_type_is_resistance(uint8_t type)

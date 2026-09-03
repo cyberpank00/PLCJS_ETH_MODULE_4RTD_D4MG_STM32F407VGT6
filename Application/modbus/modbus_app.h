@@ -6,43 +6,47 @@
   *  Float values are IEEE-754 32-bit, transmitted as two 16-bit registers with
   *  the HIGH word first (big-endian word order: register[N] = bits 31..16).
   *
-  *  ---- Input Registers (FC04, read-only) --------------------------------
-  *    Per channel, base 300 + ch*20 (ch = 0..3):
-  *      +0..1   temperature, float32 °C   (NaN for resistance modes / fault)
-  *      +2..3   calibrated resistance, float32 Ω
-  *      +4..5   raw (uncalibrated) resistance, float32 Ω   (calibration input)
-  *      +6      status flags: bit0 enabled, bit1 valid, bit2 fault,
-  *                            bits15..8 MAX31865 fault-status byte
-  *      +7      raw 15-bit ADC code
-  *      +8      resolved range (0 = low RREF, 1 = high RREF)
+  *  ---- Holding Registers (FC03/06/16) — compact per-channel block --------
+  *    Grouped by quantity, 4 registers (channels 0..3) per group:
+  *      0..3    reading, int16 (RO):
+  *                RTD types      temperature °C × 100  (−327.68 … +327.67)
+  *                R 0..200 / 2k  0..32767 scaled from the mode full scale
+  *                disabled = 0,  fault / not yet valid = −32768 (0x8000)
+  *      4..7    sensor type (rtd_type_t: 0..18 RTD scales, 19 R200, 20 R2k)
+  *      8..11   enabled (0/1)
+  *      12..15  alpha mode (0 default / 1 custom)
+  *      16..19  custom W100 × 10000
+  *      20..23  gain-class override (0 auto, 1..5 = force class 0..4; runtime)
+  *      24..27  smoothing (EMA): 0 off, 1 weak (1/4), 2 medium (1/8), 3 (1/16)
+  *
+  *  ---- Input Registers (FC04, read-only) — grouped by quantity ----------
+  *      300..307 temperature, float32 °C ×4      (NaN: resistance mode / fault)
+  *      308..315 calibrated resistance, float32 Ω ×4
+  *      316..323 raw (uncalibrated) resistance, float32 Ω ×4   (calibration input)
+  *      324..327 status flags ×4: bit0 enabled, bit1 valid, bit2 fault,
+  *                 bits15..8 fault code (1 open/over-range, 2 short, 3 ADC dead)
+  *      328..335 ADC code, int32 (24-bit signed, high word first) ×4
+  *      336..339 active gain class ×4 (0..4)
   *    Global:
   *      120 fw major, 121 fw minor, 122/123 uptime s (lo/hi),
   *      125 module id, 126 on-chip temperature (signed 0.1 °C)
+  *      127 calibration lock bitmask bits 0..15, 128 bits 16..19
+  *          (bit = CALSTORE_SLOT(ch, class) = ch*5 + class)
   *
-  *  ---- Holding Registers (FC03/06/16, read/write) -----------------------
-  *    Global:
+  *  ---- Holding Registers (FC03/06/16) — global -----------------------------
   *      100 RTD scan period ms (50..5000)      101 LED mode (0/1/2)
   *      102 Modbus slave id                    103 Modbus TCP port
   *      104..107 static IP octets              108..111 netmask octets
-  *      112..115 gateway octets                116 use DHCP (0/1)
+  *      112..115 gateway octets                116 net mode (0 static/1 DHCP/2 LL)
   *      117 SAVE trigger (0xA5A5)              118 REBOOT (0xB00B) / BOOT (0xB007)
   *                                                 / KSZ8863 reset (0x8863)
   *      119 FACTORY RESET trigger (0xDEAD)     130 on-chip temperature (RO)
   *      131 CAL COMMIT trigger (0xCA00|slot)   132 CAL ERASE ARM (0xC1A5)
-  *    Per channel, base 500 + ch*10:
-  *      +0 enabled (0/1)      +1 sensor type (rtd_type_t)
-  *      +2 alpha mode (0 default / 1 custom)   +3 custom W100 ×10000
-  *      +4 calibration range override (0 auto / 1 low / 2 high, runtime only)
-  *      +5 smoothing (EMA): 0 off, 1 weak (1/4), 2 medium (1/8), 3 strong (1/16)
-  *    Calibration coefficients (float32), base 540 + ch*8 (WRITE-ONCE):
-  *      +0..1 gain low range     +2..3 offset low range
-  *      +4..5 gain high range    +6..7 offset high range
-  *      Writes are a live preview and are rejected once the (channel,range)
-  *      slot is committed. Commit = write 0xCA00|(ch*2+range) to register 131.
-  *    Nominal reference resistors (float32 Ω):
-  *      580..581 RREF low        582..583 RREF high
-  *  ---- Input Registers (extra) ------------------------------------------
-  *      127 calibration lock bitmask (RO): bit (ch*2+range) = slot committed
+  *    Calibration coefficients (float32), base 540 + ch*20 (WRITE-ONCE):
+  *      + class*4 + 0..1 gain,  + class*4 + 2..3 offset   (class 0..4)
+  *      Writes are a live preview and are rejected once the (channel, class)
+  *      slot is committed. Commit = write 0xCA00|(ch*5+class) to register 131.
+  *    Nominal reference resistor (float32 Ω): 620..621
   ******************************************************************************
   */
 #ifndef APPLICATION_MODBUS_APP_H
@@ -68,7 +72,7 @@ extern "C" {
  * switch shows no signs of life. */
 #define MODBUS_TRIG_SWITCH_RESET    0x8863u
 
-/* Calibration commit: value = MB_CAL_COMMIT_BASE | (ch*2 + range), slot 0..7. */
+/* Calibration commit: value = MB_CAL_COMMIT_BASE | (ch*5 + class), slot 0..19. */
 #define MB_CAL_COMMIT_BASE          0xCA00u
 #define MB_CAL_COMMIT_SLOT_MASK     0x00FFu
 
@@ -107,42 +111,44 @@ extern "C" {
 #define MB_IR_UPTIME_HI             123u
 #define MB_IR_MODULE_ID             125u
 #define MB_IR_TEMPERATURE           126u
-#define MB_IR_CAL_LOCK              127u
+#define MB_IR_CAL_LOCK              127u  /* bits 0..15  */
+#define MB_IR_CAL_LOCK_HI           128u  /* bits 16..19 */
 
-/* ---- RTD readings (input registers) ---- */
 #define MB_RTD_CHANNELS             4u
-#define MB_IR_RTD_BASE              300u
-#define MB_IR_RTD_STRIDE            20u
-#define MB_IR_RTD_TEMP_OFF          0u    /* float32 */
-#define MB_IR_RTD_RCAL_OFF          2u    /* float32 */
-#define MB_IR_RTD_RRAW_OFF          4u    /* float32 */
-#define MB_IR_RTD_FLAGS_OFF         6u
-#define MB_IR_RTD_CODE_OFF          7u
-#define MB_IR_RTD_RANGE_OFF         8u
-#define MB_IR_RTD_SPAN              9u    /* used registers per channel */
+#define MB_RTD_GCLASSES             5u
 
-/* Reading flag bits (register base+6). */
+/* ---- Compact per-channel block (holding): address = group*4 + ch ---- */
+#define MB_HR_CH_BASE               0u
+#define MB_HR_CH_GROUP_READING      0u    /* int16, read-only */
+#define MB_HR_CH_GROUP_TYPE         1u
+#define MB_HR_CH_GROUP_ENABLED      2u
+#define MB_HR_CH_GROUP_ALPHA_MODE   3u
+#define MB_HR_CH_GROUP_W100         4u
+#define MB_HR_CH_GROUP_CALOVR       5u
+#define MB_HR_CH_GROUP_SMOOTH       6u
+#define MB_HR_CH_GROUPS             7u    /* registers 0..27 */
+
+/* ---- RTD readings (input registers), grouped by quantity ---- */
+#define MB_IR_RTD_BASE              300u
+#define MB_IR_RTD_TEMP              300u  /* float32 ×4 -> 300..307 */
+#define MB_IR_RTD_RCAL              308u  /* float32 ×4 -> 308..315 */
+#define MB_IR_RTD_RRAW              316u  /* float32 ×4 -> 316..323 */
+#define MB_IR_RTD_FLAGS             324u  /* u16 ×4     -> 324..327 */
+#define MB_IR_RTD_CODE              328u  /* int32 ×4   -> 328..335 */
+#define MB_IR_RTD_GCLASS            336u  /* u16 ×4     -> 336..339 */
+#define MB_IR_RTD_END               340u  /* first address past the block */
+
+/* Reading flag bits (registers 324..327). */
 #define MB_RTD_FLAG_ENABLED         0x0001u
 #define MB_RTD_FLAG_VALID           0x0002u
 #define MB_RTD_FLAG_FAULT           0x0004u
 
-/* ---- RTD config (holding registers) ---- */
-#define MB_HR_RTD_CFG_BASE          500u
-#define MB_HR_RTD_CFG_STRIDE        10u
-#define MB_HR_RTD_CFG_ENABLED       0u
-#define MB_HR_RTD_CFG_TYPE          1u
-#define MB_HR_RTD_CFG_ALPHA_MODE    2u
-#define MB_HR_RTD_CFG_W100          3u
-#define MB_HR_RTD_CFG_CALRANGE      4u
-#define MB_HR_RTD_CFG_SMOOTH        5u
-#define MB_HR_RTD_CFG_SPAN          6u
-
 /* ---- RTD calibration coefficients (holding, float32) ---- */
 #define MB_HR_RTD_CAL_BASE          540u
-#define MB_HR_RTD_CAL_STRIDE        8u    /* 4 floats per channel */
+#define MB_HR_RTD_CAL_STRIDE        20u   /* 5 classes × (gain, offset) floats */
 
-/* ---- Nominal reference resistors (holding, float32) ---- */
-#define MB_HR_RREF_BASE             580u  /* low: 580..581, high: 582..583 */
+/* ---- Nominal reference resistor (holding, float32) ---- */
+#define MB_HR_RREF_BASE             620u  /* 620..621 */
 
 /* Module ID (input register 125). */
 #define MODULE_ID_04RTD             0x04D1u

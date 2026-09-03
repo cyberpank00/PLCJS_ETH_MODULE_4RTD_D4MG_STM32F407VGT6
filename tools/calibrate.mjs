@@ -1,26 +1,31 @@
 #!/usr/bin/env node
 /**
  * calibrate.mjs — dialog-driven calibration / configuration tool for the
- * PLCJS 4RTD analog input module over Modbus TCP.
+ * PLCJS 4RTD analog input module (HW2.1, ADS1220) over Modbus TCP.
  *
  * Node.js 18+ only, no external npm packages (uses node:net / node:readline).
  *
- * The module measures a ratiometric resistance R_raw = code/32768 * RREF_nom.
- * Because the reference-resistor branch contains an analog switch (ADG849)
- * whose on-resistance and the ±0.1 % RREF tolerance are not known a priori,
- * each channel is calibrated per range with a simple linear model:
+ * The module measures a ratiometric resistance
+ *      R_raw = code / 2^23 * 2*RREF_nom / gain_PGA
+ * The RREF tolerance (±0.1 %) and the PGA gain error are not known a priori,
+ * so each channel is calibrated per gain class with a simple linear model:
  *
  *      R_true = gain * R_raw + offset
  *
  * gain and offset are found by a least-squares fit over >= 2 reference points
  * applied with a precision resistance standard (e.g. АКИП-2202А, 0.05 %).
- * The result reaches the target 0.2 % per channel.
+ *
+ * Gain classes: 0 = 50 Ω sensors (PGA 16), 1 = 100 Ω + R200 (PGA 8),
+ * 2 = 500 Ω (PGA 2), 3 = 1000 Ω (PGA 1), 4 = R2k (PGA 1).
+ *
+ * Coefficients written to 540+ are a LIVE PREVIEW. Persisting them is a
+ * write-once COMMIT (HR131 = 0xCA00 | ch*5+class) that locks the slot forever;
+ * the tool asks for explicit confirmation before committing.
  *
  * Usage:
  *   node calibrate.mjs status                 [--ip A.B.C.D] [--port 502]
- *   node calibrate.mjs calibrate --ch N --range low|high
- *   node calibrate.mjs calibrate --ch N        (calibrates both ranges)
- *   node calibrate.mjs calibrate --all         (all channels, both ranges)
+ *   node calibrate.mjs calibrate --ch N --class 0..4
+ *   node calibrate.mjs calibrate --ch N        (class of the configured type)
  *   node calibrate.mjs set --ch N --type NAME [--enable 0|1]
  *                                              [--alpha default|custom] [--w100 1.3910]
  */
@@ -30,18 +35,19 @@ import readline from 'node:readline';
 
 /* ----------------------------- register map ----------------------------- */
 const MB = {
-  // input registers (readings)
-  IR_RTD_BASE: 300, IR_RTD_STRIDE: 20,
-  IR_TEMP: 0, IR_RCAL: 2, IR_RRAW: 4, IR_FLAGS: 6, IR_CODE: 7, IR_RANGE: 8,
-  IR_MODULE_ID: 125,
-  // holding registers (config)
-  HR_RTD_CFG_BASE: 500, HR_RTD_CFG_STRIDE: 10,
-  CFG_ENABLED: 0, CFG_TYPE: 1, CFG_ALPHA_MODE: 2, CFG_W100: 3, CFG_CALRANGE: 4,
-  HR_RTD_CAL_BASE: 540, HR_RTD_CAL_STRIDE: 8,   // gainLo,offLo,gainHi,offHi (floats)
+  // input registers (readings), grouped by quantity, 4 channels each
+  IR_TEMP: 300, IR_RCAL: 308, IR_RRAW: 316, IR_FLAGS: 324, IR_CODE: 328, IR_GCLASS: 336,
+  IR_MODULE_ID: 125, IR_CAL_LOCK: 127,
+  // compact holding block: group*4 + ch
+  HR_READING: 0, HR_TYPE: 4, HR_ENABLED: 8, HR_ALPHA_MODE: 12, HR_W100: 16, HR_CALOVR: 20, HR_SMOOTH: 24,
+  // calibration coefficients: 540 + ch*20 + class*4 -> gain(2), offset(2)
+  HR_RTD_CAL_BASE: 540, HR_RTD_CAL_STRIDE: 20,
   HR_TRIG_SAVE: 117, TRIG_SAVE: 0xA5A5,
+  HR_CAL_COMMIT: 131, CAL_COMMIT_BASE: 0xCA00,
 };
 
-const CAL_OVERRIDE = { auto: 0, low: 1, high: 2 };
+const GCLASSES = 5;
+const GCLASS_NAME = ['50Ω (PGA16)', '100Ω/R200 (PGA8)', '500Ω (PGA2)', '1000Ω (PGA1)', 'R2k (PGA1)'];
 
 /* Sensor type names -> code, matching rtd_scales.h (rtd_type_t). */
 const TYPES = [
@@ -49,8 +55,10 @@ const TYPES = [
   '100M', 'Cu100', '100P', 'Pt100', 'Ni500',
   '500M', 'Cu500', '500P', 'Pt500', 'Ni1000',
   '1000M', 'Cu1000', '1000P', 'Pt1000',
-  'R2k', 'R5k',
+  'R200', 'R2k',
 ];
+/* Gain class per type code (mirrors s_types[] in rtd_scales.c). */
+const TYPE_GCLASS = [0, 0, 0, 0, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 3, 3, 1, 4];
 
 /* --------------------------- Modbus TCP client -------------------------- */
 class ModbusTCP {
@@ -152,17 +160,17 @@ function parseArgs(argv) {
   }
   return a;
 }
-
 async function readChannel(mb, ch) {
-  const base = MB.IR_RTD_BASE + ch * MB.IR_RTD_STRIDE;
-  const r = await mb.readInput(base, 9);
+  const r = await mb.readInput(MB.IR_TEMP, 40);   // 300..339 in one go
+  const f32 = (base) => regsToFloat(r[base - 300 + ch * 2], r[base - 300 + ch * 2 + 1]);
+  const codeHi = r[MB.IR_CODE - 300 + ch * 2], codeLo = r[MB.IR_CODE - 300 + ch * 2 + 1];
   return {
-    temp: regsToFloat(r[MB.IR_TEMP], r[MB.IR_TEMP + 1]),
-    rcal: regsToFloat(r[MB.IR_RCAL], r[MB.IR_RCAL + 1]),
-    rraw: regsToFloat(r[MB.IR_RRAW], r[MB.IR_RRAW + 1]),
-    flags: r[MB.IR_FLAGS],
-    code: r[MB.IR_CODE],
-    range: r[MB.IR_RANGE],
+    temp: f32(MB.IR_TEMP),
+    rcal: f32(MB.IR_RCAL),
+    rraw: f32(MB.IR_RRAW),
+    flags: r[MB.IR_FLAGS - 300 + ch],
+    code: ((codeHi << 16) | codeLo) | 0,
+    gclass: r[MB.IR_GCLASS - 300 + ch],
   };
 }
 
@@ -191,26 +199,35 @@ function linfit(points) {
   return { gain, offset, maxErr };
 }
 
+const FAULT_NAME = { 1: 'OPEN', 2: 'SHORT', 3: 'ADC' };
+
 /* ------------------------------ commands -------------------------------- */
 async function cmdStatus(mb) {
   const id = (await mb.readInput(MB.IR_MODULE_ID, 1))[0];
+  const lock = await mb.readInput(MB.IR_CAL_LOCK, 2);
+  const lockMask = lock[0] | (lock[1] << 16);
+  const cfg = await mb.readHolding(0, 28);
   console.log(`Module ID: 0x${id.toString(16)}`);
   for (let ch = 0; ch < 4; ch++) {
     const s = await readChannel(mb, ch);
     const f = [];
     if (s.flags & 1) f.push('EN'); if (s.flags & 2) f.push('VALID'); if (s.flags & 4) f.push('FAULT');
     const fcode = (s.flags >> 8) & 0xff;
-    console.log(`CH${ch}: T=${s.temp.toFixed(3)}°C  Rcal=${s.rcal.toFixed(3)}Ω  Rraw=${s.rraw.toFixed(3)}Ω  ` +
-      `range=${s.range === 1 ? 'high' : 'low'}  code=${s.code}  [${f.join(',')}]` +
-      (fcode ? ` fault=0x${fcode.toString(16)}` : ''));
+    const locked = [];
+    for (let c = 0; c < GCLASSES; c++) if (lockMask & (1 << (ch * GCLASSES + c))) locked.push(c);
+    const i16 = cfg[MB.HR_READING + ch] > 0x7fff ? cfg[MB.HR_READING + ch] - 0x10000 : cfg[MB.HR_READING + ch];
+    console.log(`CH${ch}: type=${TYPES[cfg[MB.HR_TYPE + ch]] ?? cfg[MB.HR_TYPE + ch]}  ` +
+      `T=${s.temp.toFixed(3)}°C (i16=${i16})  Rcal=${s.rcal.toFixed(3)}Ω  Rraw=${s.rraw.toFixed(4)}Ω  ` +
+      `class=${s.gclass}  code=${s.code}  [${f.join(',')}]` +
+      (fcode ? ` fault=${FAULT_NAME[fcode] ?? fcode}` : '') +
+      (locked.length ? `  locked classes: ${locked.join(',')}` : ''));
   }
 }
 
-async function calibrateRange(mb, ch, rangeName) {
-  const rangeCode = CAL_OVERRIDE[rangeName];
-  console.log(`\n=== Calibrating CH${ch}, ${rangeName} range ===`);
-  console.log(`Forcing range override (${rangeName}) ...`);
-  await mb.writeSingle(MB.HR_RTD_CFG_BASE + ch * MB.HR_RTD_CFG_STRIDE + MB.CFG_CALRANGE, rangeCode);
+async function calibrateClass(mb, ch, cls) {
+  console.log(`\n=== Calibrating CH${ch}, gain class ${cls} — ${GCLASS_NAME[cls]} ===`);
+  console.log(`Forcing gain-class override (${cls + 1}) ...`);
+  await mb.writeSingle(MB.HR_CALOVR + ch, cls + 1);
   await sleep(1500);
 
   const points = [];
@@ -232,57 +249,62 @@ async function calibrateRange(mb, ch, rangeName) {
   }
 
   const { gain, offset, maxErr } = linfit(points);
-  console.log(`\nFit: gain=${gain.toFixed(6)}  offset=${offset.toFixed(4)} Ω  max residual=${maxErr.toFixed(4)} Ω`);
+  console.log(`\nFit: gain=${gain.toFixed(7)}  offset=${offset.toFixed(4)} Ω  max residual=${maxErr.toFixed(4)} Ω`);
 
-  // write coefficients: base + (range==low? 0 : 4)  -> [gain(2), offset(2)]
-  const calBase = MB.HR_RTD_CAL_BASE + ch * MB.HR_RTD_CAL_STRIDE + (rangeName === 'high' ? 4 : 0);
+  const calBase = MB.HR_RTD_CAL_BASE + ch * MB.HR_RTD_CAL_STRIDE + cls * 4;
   await mb.writeMultiple(calBase, [...floatToRegs(gain), ...floatToRegs(offset)]);
-  console.log(`Wrote coefficients to holding regs ${calBase}..${calBase + 3}.`);
+  console.log(`Wrote coefficients (live preview) to holding regs ${calBase}..${calBase + 3}.`);
+
+  const slot = ch * GCLASSES + cls;
+  const ans = await ask(`\nCOMMIT slot ${slot} (CH${ch}, class ${cls}) to write-once Flash? This is IRREVERSIBLE. Type "COMMIT" to proceed: `);
+  if (ans.trim() === 'COMMIT') {
+    await mb.writeSingle(MB.HR_CAL_COMMIT, MB.CAL_COMMIT_BASE | slot);
+    console.log('Committed and locked.');
+  } else {
+    console.log('Not committed (preview stays active until reboot).');
+  }
 }
 
 async function cmdCalibrate(mb, args) {
-  const ranges = args.range ? [args.range] : ['low', 'high'];
   const channels = args.all ? [0, 1, 2, 3] : [parseInt(args.ch, 10)];
   if (channels.some((c) => !(c >= 0 && c <= 3))) throw new Error('Specify --ch 0..3 or --all');
 
   for (const ch of channels) {
-    for (const rg of ranges) {
-      if (!(rg in CAL_OVERRIDE) || rg === 'auto') throw new Error('range must be low or high');
-      await calibrateRange(mb, ch, rg);
+    let cls;
+    if (args.class !== undefined) {
+      cls = parseInt(args.class, 10);
+      if (!(cls >= 0 && cls < GCLASSES)) throw new Error('--class must be 0..4');
+    } else {
+      const type = (await mb.readHolding(MB.HR_TYPE + ch, 1))[0];
+      cls = TYPE_GCLASS[type];
+      if (cls === undefined) throw new Error(`CH${ch}: unknown type code ${type}, pass --class`);
+      console.log(`CH${ch}: configured type ${TYPES[type]} -> gain class ${cls}`);
     }
-    // restore auto range
-    await mb.writeSingle(MB.HR_RTD_CFG_BASE + ch * MB.HR_RTD_CFG_STRIDE + MB.CFG_CALRANGE, CAL_OVERRIDE.auto);
-  }
-
-  const save = (await ask('\nSave calibration to flash now? [Y/n] ')).trim().toLowerCase();
-  if (save === '' || save === 'y') {
-    await mb.writeSingle(MB.HR_TRIG_SAVE, MB.TRIG_SAVE);
-    console.log('Saved.');
-  } else {
-    console.log('NOT saved (coefficients are active until reboot).');
+    await calibrateClass(mb, ch, cls);
+    // restore auto class
+    await mb.writeSingle(MB.HR_CALOVR + ch, 0);
   }
 }
 
 async function cmdSet(mb, args) {
   const ch = parseInt(args.ch, 10);
   if (!(ch >= 0 && ch <= 3)) throw new Error('Specify --ch 0..3');
-  const base = MB.HR_RTD_CFG_BASE + ch * MB.HR_RTD_CFG_STRIDE;
   if (args.type) {
     const code = TYPES.indexOf(args.type);
     if (code < 0) throw new Error('Unknown type. One of: ' + TYPES.join(', '));
-    await mb.writeSingle(base + MB.CFG_TYPE, code);
-    console.log(`CH${ch} type = ${args.type} (${code})`);
+    await mb.writeSingle(MB.HR_TYPE + ch, code);
+    console.log(`CH${ch} type = ${args.type} (${code}), gain class ${TYPE_GCLASS[code]}`);
   }
   if (args.alpha) {
-    await mb.writeSingle(base + MB.CFG_ALPHA_MODE, args.alpha === 'custom' ? 1 : 0);
+    await mb.writeSingle(MB.HR_ALPHA_MODE + ch, args.alpha === 'custom' ? 1 : 0);
   }
   if (args.w100) {
-    await mb.writeSingle(base + MB.CFG_W100, Math.round(parseFloat(args.w100.replace(',', '.')) * 10000));
-    await mb.writeSingle(base + MB.CFG_ALPHA_MODE, 1);
+    await mb.writeSingle(MB.HR_W100 + ch, Math.round(parseFloat(args.w100.replace(',', '.')) * 10000));
+    await mb.writeSingle(MB.HR_ALPHA_MODE + ch, 1);
     console.log(`CH${ch} custom W100 = ${args.w100}`);
   }
   if (args.enable !== undefined) {
-    await mb.writeSingle(base + MB.CFG_ENABLED, parseInt(args.enable, 10) ? 1 : 0);
+    await mb.writeSingle(MB.HR_ENABLED + ch, parseInt(args.enable, 10) ? 1 : 0);
   }
   await mb.writeSingle(MB.HR_TRIG_SAVE, MB.TRIG_SAVE);
   console.log('Configuration saved.');
@@ -292,7 +314,7 @@ async function cmdSet(mb, args) {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   const cmd = args._[0] || 'status';
-  const ip = args.ip || '192.168.142.150';
+  const ip = args.ip || '192.168.1.12';
   const port = parseInt(args.port || '502', 10);
   const unit = parseInt(args.unit || '1', 10);
 

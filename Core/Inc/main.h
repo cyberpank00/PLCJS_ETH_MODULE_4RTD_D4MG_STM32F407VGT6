@@ -66,30 +66,20 @@ void Error_Handler(void);
 #define FACT_RES_Pin GPIO_PIN_10
 #define FACT_RES_GPIO_Port GPIOE
 
-/* ---- 4RTD analog board (MAX31865 x4) ------------------------------------ */
-/* SPI1: SCLK = PA5, MISO = PA6, MOSI = PB5 (all AF5). Configured in spi.c. */
+/* ---- 4RTD analog board HW2.1 (ADS1220 x4) ------------------------------- */
+/* SPI1: SCLK = PA5, MISO = PA6, MOSI = PB5 (all AF5). Configured in spi_bus.c. */
 
-/* Per-channel MAX31865 chip-select (active-low, idle high).
- * Board-revision pinout: CS0=PA8, CS1=PC8, CS2=PD9, CS3=PB15.
- * (STAT_LED/FACT_RES moved to PE9/PE10 on this revision, so PC8/PC6 are free.) */
-#define RTD0_CS_Pin        GPIO_PIN_8
-#define RTD0_CS_GPIO_Port  GPIOA
-#define RTD1_CS_Pin        GPIO_PIN_8
-#define RTD1_CS_GPIO_Port  GPIOC
-#define RTD2_CS_Pin        GPIO_PIN_9
+/* Per-channel ADS1220 chip-select (active-low, idle high).
+ * HW2.1 pinout: CS0=PC6, CS1=PD15, CS2=PD14, CS3=PD13. No range-select
+ * pins on this revision: the measuring range is set by the ADS1220 PGA gain. */
+#define RTD0_CS_Pin        GPIO_PIN_6
+#define RTD0_CS_GPIO_Port  GPIOC
+#define RTD1_CS_Pin        GPIO_PIN_15
+#define RTD1_CS_GPIO_Port  GPIOD
+#define RTD2_CS_Pin        GPIO_PIN_14
 #define RTD2_CS_GPIO_Port  GPIOD
-#define RTD3_CS_Pin        GPIO_PIN_15
-#define RTD3_CS_GPIO_Port  GPIOB
-
-/* Per-channel range select (ADG849 analog switch: low RREF <-> high RREF). */
-#define RTD0_RANG_Pin       GPIO_PIN_10
-#define RTD0_RANG_GPIO_Port GPIOD
-#define RTD1_RANG_Pin       GPIO_PIN_7
-#define RTD1_RANG_GPIO_Port GPIOC
-#define RTD2_RANG_Pin       GPIO_PIN_14
-#define RTD2_RANG_GPIO_Port GPIOB
-#define RTD3_RANG_Pin       GPIO_PIN_15
-#define RTD3_RANG_GPIO_Port GPIOE
+#define RTD3_CS_Pin        GPIO_PIN_13
+#define RTD3_CS_GPIO_Port  GPIOD
 
 /* Per-channel status LED (active-high). */
 #define RTD0_STAT_Pin       GPIO_PIN_14
