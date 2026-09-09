@@ -60,7 +60,7 @@ of which carry hand edits outside `USER CODE` guards (notably
 | `calstore/` | **Write-once** per-channel/per-gain-class calibration store in Flash (20 slots). Read this file before touching calibration. |
 | `temp/` | On-chip MCU temperature sensor, exposed as IR126 / HR130. |
 | `modbus/modbus_app.c` | Register-map adapter. **The map is documented in the header comment of `modbus_app.h`.** |
-| `modbus/modbus_tcp_server.c` | Single-client TCP server on LwIP netconn. |
+| `modbus/modbus_tcp_server.c` | Multi-client (4 slots) TCP server on LwIP netconn; when full, the longest-silent client is evicted (newest-wins). |
 | `settings/` | Flash-backed settings, CRC32-protected. |
 | `discovery/` | PDP responder, UDP/20556 broadcast. |
 | `net_id/` | MAC and link-local IPv4 derived from the 96-bit MCU UID. |
@@ -113,7 +113,7 @@ Keep it that way.
 ### Single sources of truth
 - **Module identity** — `Application/fw_header/fw_header.h`:
   `FW_PRODUCT_ID = 0x504C0403`, `FW_HW_REVISION = 0x0201`,
-  `FW_VERSION_VALUE = 0x0200`.
+  `FW_VERSION_VALUE = 0x0201`.
 - **Firmware version over Modbus** — IR120/IR121 derive from `FW_VERSION_VALUE`.
 - **Register map** — the header comment of `modbus_app.h`, mirrored by the
   `MB_*` constants. Keep comment and constants in step.
@@ -124,7 +124,7 @@ Keep it that way.
 ### Version policy — bump the minor on every change
 
 **Mandatory.** Every change to firmware behaviour ships with `FW_VERSION_VALUE`
-in `fw_header.h` incremented by one minor (`0x0200` → `0x0201`). The version is
+in `fw_header.h` incremented by one minor (`0x0201` → `0x0202`). The version is
 the operator's only way to tell which build is running on a device in the field,
 so an un-bumped change is a defect.
 
@@ -187,7 +187,11 @@ Two ordering constraints inherited from 12DI, both load-bearing:
 - **Device name is 15 chars + NUL in a fixed 16-byte field**, and the PDP
   IDENTIFY response is a fixed 38 bytes. Must stay identical across every module
   variant and ModbusTool.
-- Modbus TCP is single-client, newest-wins: a new connection drops the old one.
+- Modbus TCP serves up to 4 clients from one task (round-robin, 2 ms
+  first-byte poll per idle slot). Only when all 4 slots are busy does a new
+  connection evict the longest-silent client; a silent client is dropped after
+  30 s. Register callbacks are shared and sequential — last write wins. Needs
+  `MEMP_NUM_NETCONN/NETBUF/TCP_PCB = 8` in `lwipopts.h`.
 - `LED_STATE_FACTORY_RESET` is sticky until reboot and overrides all other states.
 - HR118 multiplexes distinct magics: `0xB00B` reboot, `0xB007` bootloader,
   `0x8863` KSZ8863 switch reset (operator recovery).

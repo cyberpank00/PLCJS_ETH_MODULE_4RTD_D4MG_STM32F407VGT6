@@ -121,6 +121,12 @@
 #define LWIP_TCP_KEEPALIVE 1
 /* Send hostname in DHCP requests so the router shows a friendly name. */
 #define LWIP_NETIF_HOSTNAME 1
+/* Modbus TCP serves up to 4 clients (modbus_tcp_server.c): 1 listener +
+ * 4 connections, each holding one netbuf while a frame is being parsed. The
+ * opt.h defaults (4 netconns, 2 netbufs, 5 TCP PCBs) are too tight. */
+#define MEMP_NUM_NETCONN 8
+#define MEMP_NUM_NETBUF 8
+#define MEMP_NUM_TCP_PCB 8
 /* USER CODE END 1 */
 
 #ifdef __cplusplus
