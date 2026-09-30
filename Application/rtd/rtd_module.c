@@ -56,9 +56,9 @@
  * flags and the channel LED. */
 #define RTD_FAULT_CONFIRM_TICKS 3u
 
-/* Channel status LED on fault: 2 Hz fade in / fade out (triangle in time,
+/* Channel status LED on fault: 0.5 Hz fade in / fade out (triangle in time,
  * squared for a perceptually even ramp) instead of a hard blink. */
-#define RTD_FAULT_FADE_MS       500u
+#define RTD_FAULT_FADE_MS       2000u
 
 /* Runtime, derived from settings on rtd_module_apply_config(). */
 static rtd_channel_status_t s_status[RTD_MODULE_CHANNEL_COUNT];

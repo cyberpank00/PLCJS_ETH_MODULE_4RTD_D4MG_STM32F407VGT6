@@ -65,7 +65,7 @@ of which carry hand edits outside `USER CODE` guards (notably
 | `discovery/` | PDP responder, UDP/20556 broadcast. |
 | `net_id/` | MAC and link-local IPv4 derived from the 96-bit MCU UID. |
 | `ksz8863/` | SMI/MIIM driver for the Ethernet switch. |
-| `led/`, `button/` | STAT_LED state machine; `chled_pwm.c` — software PWM (TIM7 ISR, 64 levels @ 200 Hz) for the four channel LEDs, used by `rtd_module` for the 2 Hz fault fade; FACT_RES button. **TIM7 is taken.** |
+| `led/`, `button/` | STAT_LED state machine; `chled_pwm.c` — software PWM (TIM7 ISR, 64 levels @ 200 Hz) for the four channel LEDs, used by `rtd_module` for the 0.5 Hz fault fade; FACT_RES button. **TIM7 is taken.** |
 | `fw_header/` | Firmware image header consumed by the bootloader. Module identity. |
 | `third_party/nanomodbus/` | Vendored protocol library. |
 
@@ -113,7 +113,7 @@ Keep it that way.
 ### Single sources of truth
 - **Module identity** — `Application/fw_header/fw_header.h`:
   `FW_PRODUCT_ID = 0x504C0403`, `FW_HW_REVISION = 0x0201`,
-  `FW_VERSION_VALUE = 0x0204`.
+  `FW_VERSION_VALUE = 0x0205`.
 - **Firmware version over Modbus** — IR120/IR121 derive from `FW_VERSION_VALUE`.
 - **Register map** — the header comment of `modbus_app.h`, mirrored by the
   `MB_*` constants. Keep comment and constants in step.
@@ -124,7 +124,7 @@ Keep it that way.
 ### Version policy — bump the minor on every change
 
 **Mandatory.** Every change to firmware behaviour ships with `FW_VERSION_VALUE`
-in `fw_header.h` incremented by one minor (`0x0204` → `0x0205`). The version is
+in `fw_header.h` incremented by one minor (`0x0205` → `0x0206`). The version is
 the operator's only way to tell which build is running on a device in the field,
 so an un-bumped change is a defect.
 
