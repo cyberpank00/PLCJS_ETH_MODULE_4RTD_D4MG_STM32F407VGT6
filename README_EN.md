@@ -49,7 +49,7 @@ differential input is `I·R_RTD` (lead resistances cancel for `I1 = I2`):
 R_RTD = code / 2^23 × 2·RREF / gain
 ```
 
-Per-channel LED: solid = channel active, off = disabled, 0.5 Hz fade in/out (2 s period) =
+Per-channel LED: solid = channel active, off = disabled, 2 s fade in/out + 0.5 s dark pause (2.5 s cycle) =
 fault (open/short/reversed sensor, ADC not responding). Factory defaults: all
 four channels **enabled**, type **Pt1000**.
 
@@ -216,7 +216,7 @@ cmake --build --preset Debug
 ```
 
 Identity — single source `Application/fw_header/fw_header.h`:
-`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0201`, `FW_VERSION_VALUE=0x0205`.
+`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0201`, `FW_VERSION_VALUE=0x0206`.
 OTA accepts an image when product_id and the hw_revision major byte match —
 HW1.x (`0x01xx`) and HW2.x (`0x02xx`) images are mutually incompatible.
 

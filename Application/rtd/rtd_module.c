@@ -56,9 +56,11 @@
  * flags and the channel LED. */
 #define RTD_FAULT_CONFIRM_TICKS 3u
 
-/* Channel status LED on fault: 0.5 Hz fade in / fade out (triangle in time,
- * squared for a perceptually even ramp) instead of a hard blink. */
+/* Channel status LED on fault: fade in / fade out over RTD_FAULT_FADE_MS
+ * (triangle in time, squared for a perceptually even ramp), then a dark
+ * pause of RTD_FAULT_DARK_MS. Cycle = 2.5 s. */
 #define RTD_FAULT_FADE_MS       2000u
+#define RTD_FAULT_DARK_MS       500u
 
 /* Runtime, derived from settings on rtd_module_apply_config(). */
 static rtd_channel_status_t s_status[RTD_MODULE_CHANNEL_COUNT];
@@ -396,14 +398,18 @@ int16_t rtd_module_int16_view(uint8_t ch)
 
 void rtd_module_led_tick(uint16_t period_ms)
 {
-    s_fade_ms = (uint16_t)((s_fade_ms + period_ms) % RTD_FAULT_FADE_MS);
+    s_fade_ms = (uint16_t)((s_fade_ms + period_ms) % (RTD_FAULT_FADE_MS + RTD_FAULT_DARK_MS));
 
-    /* Triangle 0 -> 1 -> 0 over the period, squared so the eye sees an even
-     * ramp (LED brightness is roughly logarithmic). */
-    const uint16_t half = RTD_FAULT_FADE_MS / 2u;
-    const float    tri  = (s_fade_ms < half) ? (float)s_fade_ms / (float)half
-                                             : (float)(RTD_FAULT_FADE_MS - s_fade_ms) / (float)half;
-    const uint8_t  fade = (uint8_t)(tri * tri * (float)CHLED_PWM_MAX + 0.5f);
+    /* Triangle 0 -> 1 -> 0 over RTD_FAULT_FADE_MS, then RTD_FAULT_DARK_MS of
+     * darkness. Squared so the eye sees an even ramp (LED brightness is
+     * roughly logarithmic). */
+    uint8_t fade = 0u;
+    if (s_fade_ms < RTD_FAULT_FADE_MS) {
+        const uint16_t half = RTD_FAULT_FADE_MS / 2u;
+        const float    tri  = (s_fade_ms < half) ? (float)s_fade_ms / (float)half
+                                                 : (float)(RTD_FAULT_FADE_MS - s_fade_ms) / (float)half;
+        fade = (uint8_t)(tri * tri * (float)CHLED_PWM_MAX + 0.5f);
+    }
 
     for (uint8_t ch = 0; ch < RTD_MODULE_CHANNEL_COUNT; ch++) {
         if (!s_enabled[ch]) {
