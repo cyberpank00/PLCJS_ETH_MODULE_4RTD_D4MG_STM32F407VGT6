@@ -113,7 +113,7 @@ Keep it that way.
 ### Single sources of truth
 - **Module identity** — `Application/fw_header/fw_header.h`:
   `FW_PRODUCT_ID = 0x504C0403`, `FW_HW_REVISION = 0x0201`,
-  `FW_VERSION_VALUE = 0x0207`.
+  `FW_VERSION_VALUE = 0x0208`.
 - **Firmware version over Modbus** — IR120/IR121 derive from `FW_VERSION_VALUE`.
 - **Register map** — the header comment of `modbus_app.h`, mirrored by the
   `MB_*` constants. Keep comment and constants in step.
@@ -124,7 +124,7 @@ Keep it that way.
 ### Version policy — bump the minor on every change
 
 **Mandatory.** Every change to firmware behaviour ships with `FW_VERSION_VALUE`
-in `fw_header.h` incremented by one minor (`0x0207` → `0x0208`). The version is
+in `fw_header.h` incremented by one minor (`0x0208` → `0x0209`). The version is
 the operator's only way to tell which build is running on a device in the field,
 so an un-bumped change is a defect.
 
@@ -191,7 +191,11 @@ Two ordering constraints inherited from 12DI, both load-bearing:
   first-byte poll per idle slot). Only when all 4 slots are busy does a new
   connection evict the longest-silent client; a silent client is dropped after
   30 s. Register callbacks are shared and sequential — last write wins. Needs
-  `MEMP_NUM_NETCONN/NETBUF/TCP_PCB = 8` in `lwipopts.h`.
+  `MEMP_NUM_NETCONN/NETBUF = 8`, `MEMP_NUM_TCP_PCB = 12` in `lwipopts.h`.
+- **Slots are closed with `tcp_abort` (RST), never `netconn_close` (FIN).** A
+  FIN to a vanished peer leaves the pcb in FIN_WAIT_1 retransmitting for
+  minutes; a handful of cable pulls exhausted the pcb pool and LwIP silently
+  dropped every new SYN (PDP still answered, Modbus looked dead). Keep it so.
 - STAT_LED `POLLING` (double blink) is driven by *request recency only*: one
   `LED_POLLING_PERIOD_MS` window after the last valid Modbus request, no
   "client connected" condition. Clients that open a TCP connection per request

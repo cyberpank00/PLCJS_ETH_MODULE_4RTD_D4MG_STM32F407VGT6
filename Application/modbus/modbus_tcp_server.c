@@ -32,6 +32,7 @@
 #include "lwip/err.h"
 #include "lwip/sys.h"
 #include "lwip/tcp.h"
+#include "lwip/tcpip.h"
 
 #include "modbus_app.h"
 #include "nanomodbus.h"
@@ -171,11 +172,30 @@ static void mb_sleep(uint32_t ms, void* arg)
 /* ---------------------------------------------------------------------------
  * Slot lifecycle
  * ------------------------------------------------------------------------- */
+/* Runs in the tcpip thread: abort the TCP pcb behind a netconn (RST instead
+ * of FIN). The netconn's err callback then detaches the pcb (pcb.tcp = NULL),
+ * so the following netconn_delete() only frees the netconn itself. */
+static void abort_pcb_cb(void* arg)
+{
+    struct netconn* conn = (struct netconn*)arg;
+    if (conn->pcb.tcp != NULL) {
+        tcp_abort(conn->pcb.tcp);
+    }
+}
+
+/* Every slot is closed with an ABORT, never a graceful FIN. The peers we
+ * drop here are dead or being evicted: a FIN to a peer that vanished (cable
+ * pull) leaves the pcb in FIN_WAIT_1 retransmitting for minutes, and a few
+ * such pcbs exhaust MEMP_NUM_TCP_PCB — LwIP then silently drops every new
+ * SYN and the module looks dead to Modbus while PDP still answers. Seen on
+ * the bench after ~5 cable pulls. tcp_abort() frees the pcb at once; a live
+ * Modbus client copes with RST exactly as with FIN. Both messages travel the
+ * tcpip mailbox in order, so the abort always runs before the delete. */
 static void client_close(mb_client_t* c)
 {
     inbuf_release(c);
     if (c->conn != NULL) {
-        netconn_close(c->conn);
+        (void)tcpip_callback_with_block(abort_pcb_cb, c->conn, 1);
         netconn_delete(c->conn);
         c->conn = NULL;
         if (s_client_count > 0u) { s_client_count--; }
