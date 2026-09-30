@@ -113,7 +113,7 @@ Keep it that way.
 ### Single sources of truth
 - **Module identity** — `Application/fw_header/fw_header.h`:
   `FW_PRODUCT_ID = 0x504C0403`, `FW_HW_REVISION = 0x0201`,
-  `FW_VERSION_VALUE = 0x0208`.
+  `FW_VERSION_VALUE = 0x020A`.
 - **Firmware version over Modbus** — IR120/IR121 derive from `FW_VERSION_VALUE`.
 - **Register map** — the header comment of `modbus_app.h`, mirrored by the
   `MB_*` constants. Keep comment and constants in step.
@@ -124,7 +124,7 @@ Keep it that way.
 ### Version policy — bump the minor on every change
 
 **Mandatory.** Every change to firmware behaviour ships with `FW_VERSION_VALUE`
-in `fw_header.h` incremented by one minor (`0x0208` → `0x0209`). The version is
+in `fw_header.h` incremented by one minor (`0x020A` → `0x020B`). The version is
 the operator's only way to tell which build is running on a device in the field,
 so an un-bumped change is a defect.
 
@@ -196,6 +196,27 @@ Two ordering constraints inherited from 12DI, both load-bearing:
   FIN to a vanished peer leaves the pcb in FIN_WAIT_1 retransmitting for
   minutes; a handful of cable pulls exhausted the pcb pool and LwIP silently
   dropped every new SYN (PDP still answered, Modbus looked dead). Keep it so.
+  The abort must be **synchronous under LOCK_TCPIP_CORE()** — with
+  LWIP_TCPIP_CORE_LOCKING the netconn API runs in the caller, so a queued
+  	cpip_callback() abort would land after 
+etconn_delete() freed and the
+  next accept reused the netconn, killing the new client (fw 2.8 bug).
+- The server drops clients on `g_eth_link_stable` (debounced, follows the
+  netif), not on the instantaneous `g_eth_any_link_up` (LED only): the KSZ8863
+  port blips link-down for ~10 s after a cable is plugged back.
+- **`nmbs_server_poll()` returns `NMBS_ERROR_NONE` for "nothing arrived" too.**
+  A request is counted only when a response was produced (`txbuf_len != 0`).
+  Counting the idle return as a request kept `last_activity` fresh forever
+  (idle-drop never fired), lit POLLING for any silent client and fed the
+  comms-loss timer of the output modules from a silent connection.
+- `ethernet_link_thread` never calls `HAL_ETH_Stop_IT/Start_IT` after init:
+  the MAC↔KSZ8863 port-3 MII link is internal and always up, and the HAL's
+  Start_IT re-arms the RX ring without resyncing the read index. Only the
+  netif link flag is toggled (gratuitous ARP / DHCP restart).
+- Bench note: a VPN TUN adapter on the PC (happ-xray) answers SYNs to any IP
+  with a fake SYN-ACK while the lab NIC is down. That produced "connected but
+  no reply for one full timeout" after every cable re-plug and cost a day of
+  chasing the module. Check `Find-NetRoute` before blaming the firmware.
 - STAT_LED `POLLING` (double blink) is driven by *request recency only*: one
   `LED_POLLING_PERIOD_MS` window after the last valid Modbus request, no
   "client connected" condition. Clients that open a TCP connection per request
