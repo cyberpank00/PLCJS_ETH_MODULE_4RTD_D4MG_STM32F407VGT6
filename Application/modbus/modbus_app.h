@@ -24,7 +24,10 @@
   *      308..315 calibrated resistance, float32 Ω ×4
   *      316..323 raw (uncalibrated) resistance, float32 Ω ×4   (calibration input)
   *      324..327 status flags ×4: bit0 enabled, bit1 valid, bit2 fault,
-  *                 bits15..8 fault code (1 open/over-range, 2 short, 3 ADC dead)
+  *                 bits15..8 fault code (1 open/over-range, 2 short, 3 ADC dead,
+  *                 4 reversed: negative code, excitation not flowing S+ -> S-).
+  *                 Faults are debounced: raised after 3 consecutive faulty scans,
+  *                 cleared (valid again) after 3 consecutive good ones.
   *      328..335 ADC code, int32 (24-bit signed, high word first) ×4
   *      336..339 active gain class ×4 (0..4)
   *    Global:

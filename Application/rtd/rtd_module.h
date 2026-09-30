@@ -43,6 +43,8 @@ extern "C" {
 #define RTD_FAULT_OPEN              1u   /* open sensor / over-range (code ≈ +FS) */
 #define RTD_FAULT_SHORT             2u   /* shorted sensor / under-range          */
 #define RTD_FAULT_ADC               3u   /* converter not responding on SPI       */
+#define RTD_FAULT_REVERSED          4u   /* negative code: excitation not flowing S+ -> S-
+                                            (leads swapped, sensor on S-/E only, no return) */
 
 /* int16 view of a channel reading (holding registers 0..3). */
 #define RTD_I16_FAULT               ((int16_t)-32768)

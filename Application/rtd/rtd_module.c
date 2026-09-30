@@ -28,6 +28,17 @@
  * is still ~0.185·R0, copper at −180 °C ~0.22·R0). */
 #define RTD_SHORT_FRACTION      0.10f
 
+/* Codes below this are a reversed / mis-wired sensor: the excitation is not
+ * flowing S+ -> S- (leads swapped, sensor between S- and E, no return path).
+ * −0.5 % FS: well beyond offset + noise, well above any genuine short. */
+#define RTD_CODE_REVERSED       (-0x00010000)
+
+/* Fault debounce: a fault is raised only after this many consecutive faulty
+ * scans, and cleared only after RTD_SETTLE_TICKS consecutive good ones, so a
+ * single glitch (or the chaos of a floating input) does not flap the status
+ * flags and the channel LED. */
+#define RTD_FAULT_CONFIRM_TICKS 3u
+
 /* Channel status LED blink half-period on fault, ms. */
 #define RTD_FAULT_BLINK_MS      100u
 
@@ -51,6 +62,7 @@ static float    s_w100[RTD_MODULE_CHANNEL_COUNT];
 static uint8_t  s_gclass[RTD_MODULE_CHANNEL_COUNT];
 static uint8_t  s_cal_override[RTD_MODULE_CHANNEL_COUNT];
 static uint8_t  s_settle[RTD_MODULE_CHANNEL_COUNT];
+static uint8_t  s_fault_cnt[RTD_MODULE_CHANNEL_COUNT];   /* consecutive faulty scans */
 static uint16_t s_scan_ms = SETTINGS_DEF_SCAN_MS;
 
 /* Software smoothing (EMA): y += alpha * (x - y), alpha = 1 / 2^(level+1),
@@ -146,11 +158,20 @@ void rtd_module_apply_config(void)
          * seeds it, avoiding a slow crawl from a value taken under the old
          * configuration. */
         s_ema_seeded[ch] = false;
+        s_fault_cnt[ch]  = 0u;
     }
 }
 
+/* Register one faulty scan. The fault is asserted only once it has persisted
+ * for RTD_FAULT_CONFIRM_TICKS scans; until then the previous status is held. */
 static void set_fault(rtd_channel_status_t* st, uint8_t ch, uint8_t code)
 {
+    if (s_fault_cnt[ch] < RTD_FAULT_CONFIRM_TICKS) {
+        s_fault_cnt[ch]++;
+    }
+    if (s_fault_cnt[ch] < RTD_FAULT_CONFIRM_TICKS && !st->fault) {
+        return;                 /* not yet confirmed: hold the last good status */
+    }
     st->fault        = true;
     st->fault_code   = code;
     st->valid        = false;
@@ -158,6 +179,18 @@ static void set_fault(rtd_channel_status_t* st, uint8_t ch, uint8_t code)
     st->r_cal        = NAN;
     st->temperature  = NAN;
     s_ema_seeded[ch] = false;   /* restart smoothing after the fault */
+}
+
+/* Register one good scan: leaving a confirmed fault goes through the settle
+ * window again, so 'valid' returns only after several consistent readings. */
+static void clear_fault(rtd_channel_status_t* st, uint8_t ch)
+{
+    s_fault_cnt[ch] = 0u;
+    if (st->fault) {
+        st->fault      = false;
+        st->fault_code = RTD_FAULT_NONE;
+        s_settle[ch]   = RTD_SETTLE_TICKS;
+    }
 }
 
 void rtd_module_tick(void)
@@ -180,6 +213,7 @@ void rtd_module_tick(void)
             st->r_cal       = NAN;
             st->temperature = NAN;
             s_ema_seeded[ch] = false;
+            s_fault_cnt[ch]  = 0u;
             continue;
         }
 
@@ -193,6 +227,10 @@ void rtd_module_tick(void)
         }
         if (code >= RTD_CODE_OPEN) {
             set_fault(st, ch, RTD_FAULT_OPEN);
+            continue;
+        }
+        if (code <= RTD_CODE_REVERSED) {
+            set_fault(st, ch, RTD_FAULT_REVERSED);
             continue;
         }
 
@@ -211,8 +249,7 @@ void rtd_module_tick(void)
             r_cal = 0.0f;   /* noise around a genuine 0 Ω input */
         }
 
-        st->fault      = false;
-        st->fault_code = RTD_FAULT_NONE;
+        clear_fault(st, ch);
 
         if (s_settle[ch] > 0u) {
             s_settle[ch]--;

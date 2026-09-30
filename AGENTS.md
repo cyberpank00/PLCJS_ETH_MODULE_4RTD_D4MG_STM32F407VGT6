@@ -79,7 +79,7 @@ channels 0..3), not per channel. `float32` is two registers, **high word first**
   `20..23` gain-class override (0 auto / 1..5), `24..27` EMA level (0..3,
   α = 1/4, 1/8, 1/16; applied to r_cal, raw values stay unfiltered).
 - Readings (FC04) `300..339`: temp f32 ×4, R_cal f32 ×4, R_raw f32 ×4,
-  flags ×4 (fault code in bits 15..8: 1 open, 2 short, 3 ADC dead), ADC code
+  flags ×4 (fault code in bits 15..8: 1 open, 2 short, 3 ADC dead, 4 reversed), ADC code
   int32 ×4, active gain class ×4.
 - Calibration coefficients (FC03/06/16): `540 + ch*20 + class*4` — gain, offset.
 - Nominal RREF: `620..621` (single, default 2000 Ω).
@@ -113,7 +113,7 @@ Keep it that way.
 ### Single sources of truth
 - **Module identity** — `Application/fw_header/fw_header.h`:
   `FW_PRODUCT_ID = 0x504C0403`, `FW_HW_REVISION = 0x0201`,
-  `FW_VERSION_VALUE = 0x0201`.
+  `FW_VERSION_VALUE = 0x0202`.
 - **Firmware version over Modbus** — IR120/IR121 derive from `FW_VERSION_VALUE`.
 - **Register map** — the header comment of `modbus_app.h`, mirrored by the
   `MB_*` constants. Keep comment and constants in step.
@@ -124,7 +124,7 @@ Keep it that way.
 ### Version policy — bump the minor on every change
 
 **Mandatory.** Every change to firmware behaviour ships with `FW_VERSION_VALUE`
-in `fw_header.h` incremented by one minor (`0x0201` → `0x0202`). The version is
+in `fw_header.h` incremented by one minor (`0x0202` → `0x0203`). The version is
 the operator's only way to tell which build is running on a device in the field,
 so an un-bumped change is a defect.
 
@@ -201,10 +201,21 @@ Two ordering constraints inherited from 12DI, both load-bearing:
   space; the same value is also at IR126.
 - `float32` registers are high-word-first. Getting the word order wrong produces
   plausible-looking garbage rather than an obvious error.
-- ADS1220 has **no fault register**: open/short are inferred from the code
-  (`RTD_CODE_OPEN`, `RTD_SHORT_FRACTION` in `rtd_module.c`) and a dead
-  converter from a config-register readback mismatch. Resistance modes skip the
-  short check because 0 Ω is a valid input there.
+- ADS1220 has **no fault register**: open/short/reversed are inferred from the
+  code (`RTD_CODE_OPEN`, `RTD_SHORT_FRACTION`, `RTD_CODE_REVERSED` in
+  `rtd_module.c`) and a dead converter from a config-register readback mismatch.
+  Resistance modes skip the short check because 0 Ω is a valid input there.
+  Faults are debounced (`RTD_FAULT_CONFIRM_TICKS` scans to raise, the settle
+  window to clear) — do not bypass `set_fault()` / `clear_fault()`.
+- **The config-readback liveness check cannot detect a stuck-selected chip.** A
+  CS line that never reaches its ADS1220 (isolator CA-IS3740**L** defaults its
+  output LOW → chip permanently selected) makes that chip answer every
+  transaction together with the addressed one. Register readbacks still match
+  (all selected chips receive the same write), internal monitors (die
+  temperature, AVDD/4) read clean, and only external-input conversions come out
+  as bit-mixed garbage (codes like `0x3FFFFF`, `0x1FFFFF`, differential ≈ 0).
+  Seen on the first HW2.1 board (unsoldered CS resistor-array pin). Diagnose by
+  writing distinct `reg0` values per chip and reading all four back.
 - Gain classes and their PGA codes live in one table (`s_gclass[]` in
   `rtd_scales.c`) so the register value and the maths cannot drift. Pt500 at
   850 °C is 97.6 % of the class-2 full scale — a deliberate trade-off.

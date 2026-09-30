@@ -87,7 +87,11 @@ forced via registers `20..23` (for calibration). `FS = 4000 Ω / gain`.
 
 Fault detection (the ADS1220 has no fault register): code ≥ `0x7FF000` → open
 / over-range (1); `R < 0.1·R0` for RTD types → short (2); config readback
-mismatch → ADC not responding (3).
+mismatch → ADC not responding (3); code ≤ `−0x10000` (−0.5 % FS) → reversed (4):
+the excitation is not flowing S+ → S− (S+/S− swapped, sensor wired between S−
+and E, no return path through E). A 2-wire sensor goes between **S+ and E** with
+a **S−–E** jumper. Faults are debounced: raised after 3 consecutive faulty scans,
+cleared (`valid` again) after 3 consecutive good ones.
 
 ## Calibration
 
@@ -143,7 +147,7 @@ channels 0..3.
 | 300..307 | float32 ×4 | temperature, °C (NaN for resistance mode / fault) |
 | 308..315 | float32 ×4 | calibrated resistance, Ω |
 | 316..323 | float32 ×4 | raw resistance, Ω (calibration input) |
-| 324..327 | u16 ×4 | flags: bit0 enabled, bit1 valid, bit2 fault, bits15..8 fault code (1 open, 2 short, 3 ADC) |
+| 324..327 | u16 ×4 | flags: bit0 enabled, bit1 valid, bit2 fault, bits15..8 fault code (1 open, 2 short, 3 ADC, 4 reversed) |
 | 328..335 | int32 ×4 | 24-bit signed ADC code (high word first) |
 | 336..339 | u16 ×4 | active gain class (0..4) |
 
@@ -206,7 +210,7 @@ cmake --build --preset Debug
 ```
 
 Identity — single source `Application/fw_header/fw_header.h`:
-`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0201`, `FW_VERSION_VALUE=0x0201`.
+`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0201`, `FW_VERSION_VALUE=0x0202`.
 OTA accepts an image when product_id and the hw_revision major byte match —
 HW1.x (`0x01xx`) and HW2.x (`0x02xx`) images are mutually incompatible.
 
