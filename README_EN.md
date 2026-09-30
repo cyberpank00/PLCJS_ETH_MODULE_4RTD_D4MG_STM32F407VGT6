@@ -216,7 +216,7 @@ cmake --build --preset Debug
 ```
 
 Identity — single source `Application/fw_header/fw_header.h`:
-`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0201`, `FW_VERSION_VALUE=0x0206`.
+`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0201`, `FW_VERSION_VALUE=0x0207`.
 OTA accepts an image when product_id and the hw_revision major byte match —
 HW1.x (`0x01xx`) and HW2.x (`0x02xx`) images are mutually incompatible.
 

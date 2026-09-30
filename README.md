@@ -334,7 +334,7 @@ cmake --build --preset Debug
 ```
 
 Идентичность варианта — единый источник `Application/fw_header/fw_header.h`:
-`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0201`, `FW_VERSION_VALUE=0x0206`
+`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0201`, `FW_VERSION_VALUE=0x0207`
 (при необходимости переопределяются через `-DFW_PRODUCT_ID=...` и т.д.).
 OTA принимает образ при совпадении product_id и старшего байта hw_revision —
 образы HW1.x (`0x01xx`) и HW2.x (`0x02xx`) взаимно несовместимы.
