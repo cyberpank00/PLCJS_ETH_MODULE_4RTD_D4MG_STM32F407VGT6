@@ -33,6 +33,22 @@
  * −0.5 % FS: well beyond offset + noise, well above any genuine short. */
 #define RTD_CODE_REVERSED       (-0x00010000)
 
+/* Excitation-loop check. The +FS "open" signature is only reliable at gain
+ * >= 8: at gain 1/2 an open sensor drives the PGA inputs to the rail and its
+ * output is undefined (one die reads deeply negative, another wanders around
+ * zero and looks like a valid −170 °C). What is unambiguous is the reference:
+ * with no return path no current flows through RREF and V_REF collapses from
+ * 2·I·RREF ≈ 2.0 V to ≈ 0. So one channel at a time is switched to the
+ * (REFP0−REFN0)/4 system monitor (converted by the device against its
+ * internal 2.048 V reference) for one tick; below RTD_LOOP_MIN_CODE the loop
+ * is open — verified on hardware: healthy ≈ 0.24 FS, open ≈ 0. The channel holds its last
+ * status while the monitor runs and while its FIR resettles afterwards, so
+ * consumers see a value up to ~1 s old rather than a 'valid' blip. */
+#define RTD_LOOP_MIN_CODE       ((int32_t)(0.05f * ADS1220_FULL_SCALE))  /* V_REF < ~0.4 V */
+#define RTD_LOOP_SETTLE_MS      200u    /* >= 3 conversions at 20 SPS for the FIR */
+#define RTD_LOOP_PERIOD_MS      4000u   /* each channel is re-checked at least this often */
+#define RTD_LOOP_NONE           0xFFu
+
 /* Fault debounce: a fault is raised only after this many consecutive faulty
  * scans, and cleared only after RTD_SETTLE_TICKS consecutive good ones, so a
  * single glitch (or the chaos of a floating input) does not flap the status
@@ -63,6 +79,16 @@ static uint8_t  s_gclass[RTD_MODULE_CHANNEL_COUNT];
 static uint8_t  s_cal_override[RTD_MODULE_CHANNEL_COUNT];
 static uint8_t  s_settle[RTD_MODULE_CHANNEL_COUNT];
 static uint8_t  s_fault_cnt[RTD_MODULE_CHANNEL_COUNT];   /* consecutive faulty scans */
+
+/* Loop-check state: the channel currently in monitor mode (or NONE), when it
+ * entered, when each channel was last checked, per-channel verdict and the
+ * post-check hold (ticks during which the channel keeps its last status). */
+static uint8_t  s_loop_ch = RTD_LOOP_NONE;
+static uint32_t s_loop_enter_tick;
+static uint32_t s_loop_last_tick[RTD_MODULE_CHANNEL_COUNT];
+static bool     s_loop_open[RTD_MODULE_CHANNEL_COUNT];
+static bool     s_loop_checked[RTD_MODULE_CHANNEL_COUNT];   /* verdict exists at all */
+static uint8_t  s_hold[RTD_MODULE_CHANNEL_COUNT];
 static uint16_t s_scan_ms = SETTINGS_DEF_SCAN_MS;
 
 /* Software smoothing (EMA): y += alpha * (x - y), alpha = 1 / 2^(level+1),
@@ -142,9 +168,19 @@ void rtd_module_init(void)
     ads1220_init(gain_code);
 }
 
+static uint8_t loop_hold_ticks(void);
+
 void rtd_module_apply_config(void)
 {
     load_settings();
+
+    /* Abort a loop check in flight: the gain write below would otherwise be
+     * mistaken for the monitor result. */
+    if (s_loop_ch != RTD_LOOP_NONE) {
+        ads1220_set_gain(s_loop_ch, rtd_gclass_gain_code(s_gclass[s_loop_ch]));
+        s_hold[s_loop_ch] = loop_hold_ticks();
+        s_loop_ch         = RTD_LOOP_NONE;
+    }
 
     for (uint8_t ch = 0; ch < RTD_MODULE_CHANNEL_COUNT; ch++) {
         const uint8_t gclass = resolve_gclass(ch);
@@ -193,9 +229,55 @@ static void clear_fault(rtd_channel_status_t* st, uint8_t ch)
     }
 }
 
+/* Ticks a channel must hold after leaving monitor mode: the FIR needs
+ * RTD_LOOP_SETTLE_MS of fresh conversions before its data is trustworthy. */
+static uint8_t loop_hold_ticks(void)
+{
+    const uint8_t t = (uint8_t)((RTD_LOOP_SETTLE_MS + s_scan_ms - 1u) / s_scan_ms);
+    return (t > RTD_SETTLE_TICKS) ? t : RTD_SETTLE_TICKS;
+}
+
+/* One step of the excitation-loop checker (see RTD_LOOP_* above). */
+static void loop_check_step(uint32_t now)
+{
+    if (s_loop_ch != RTD_LOOP_NONE) {
+        if ((now - s_loop_enter_tick) < RTD_LOOP_SETTLE_MS) { return; }
+        const uint8_t ch = s_loop_ch;
+        int32_t code = 0;
+        if (ads1220_read_data(ch, &code)) {         /* dead bus: leave the verdict alone */
+            s_loop_open[ch]    = (code < RTD_LOOP_MIN_CODE);
+            s_loop_checked[ch] = true;
+        }
+        ads1220_set_gain(ch, rtd_gclass_gain_code(s_gclass[ch]));
+        s_hold[ch]            = loop_hold_ticks();
+        s_loop_last_tick[ch]  = now;
+        s_loop_ch             = RTD_LOOP_NONE;
+        return;
+    }
+
+    /* Nothing in progress: never disturb a channel while another is still
+     * resettling, then pick the enabled channel checked longest ago. */
+    uint8_t  pick = RTD_LOOP_NONE;
+    uint32_t age_max = 0u;
+    for (uint8_t ch = 0; ch < RTD_MODULE_CHANNEL_COUNT; ch++) {
+        if (s_hold[ch] != 0u) { return; }
+        if (!s_enabled[ch]) { continue; }
+        const uint32_t age = now - s_loop_last_tick[ch];
+        if (age >= RTD_LOOP_PERIOD_MS && age >= age_max) { age_max = age; pick = ch; }
+    }
+    if (pick == RTD_LOOP_NONE) { return; }
+
+    ads1220_enter_ref_monitor(pick);
+    s_loop_enter_tick = now;
+    s_loop_ch         = pick;
+}
+
 void rtd_module_tick(void)
 {
     const settings_t* s = settings_get();
+    const uint32_t now = HAL_GetTick();
+
+    loop_check_step(now);
 
     for (uint8_t ch = 0; ch < RTD_MODULE_CHANNEL_COUNT; ch++) {
         rtd_channel_status_t* st = &s_status[ch];
@@ -214,6 +296,23 @@ void rtd_module_tick(void)
             st->temperature = NAN;
             s_ema_seeded[ch] = false;
             s_fault_cnt[ch]  = 0u;
+            s_loop_open[ch]    = false;
+            s_loop_checked[ch] = false;
+            s_hold[ch]         = 0u;
+            continue;
+        }
+
+        /* In monitor mode or resettling after it: keep the last status.
+         * Before the first loop verdict nothing is published either — at
+         * gain 1 an open channel can look like a valid −180 °C. */
+        if (ch == s_loop_ch || !s_loop_checked[ch]) { continue; }
+        if (s_hold[ch] != 0u) { s_hold[ch]--; continue; }
+
+        /* Loop verdict overrides the code-based signatures: with V_REF gone
+         * the ratiometric result is meaningless whatever it looks like. */
+        if (s_loop_open[ch]) {
+            s_fault_cnt[ch] = RTD_FAULT_CONFIRM_TICKS;  /* measured, not inferred */
+            set_fault(st, ch, RTD_FAULT_OPEN);
             continue;
         }
 

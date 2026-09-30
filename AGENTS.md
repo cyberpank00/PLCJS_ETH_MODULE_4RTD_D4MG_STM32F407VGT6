@@ -113,7 +113,7 @@ Keep it that way.
 ### Single sources of truth
 - **Module identity** — `Application/fw_header/fw_header.h`:
   `FW_PRODUCT_ID = 0x504C0403`, `FW_HW_REVISION = 0x0201`,
-  `FW_VERSION_VALUE = 0x0202`.
+  `FW_VERSION_VALUE = 0x0203`.
 - **Firmware version over Modbus** — IR120/IR121 derive from `FW_VERSION_VALUE`.
 - **Register map** — the header comment of `modbus_app.h`, mirrored by the
   `MB_*` constants. Keep comment and constants in step.
@@ -124,7 +124,7 @@ Keep it that way.
 ### Version policy — bump the minor on every change
 
 **Mandatory.** Every change to firmware behaviour ships with `FW_VERSION_VALUE`
-in `fw_header.h` incremented by one minor (`0x0202` → `0x0203`). The version is
+in `fw_header.h` incremented by one minor (`0x0203` → `0x0204`). The version is
 the operator's only way to tell which build is running on a device in the field,
 so an un-bumped change is a defect.
 
@@ -207,6 +207,14 @@ Two ordering constraints inherited from 12DI, both load-bearing:
   Resistance modes skip the short check because 0 Ω is a valid input there.
   Faults are debounced (`RTD_FAULT_CONFIRM_TICKS` scans to raise, the settle
   window to clear) — do not bypass `set_fault()` / `clear_fault()`.
+- **Open detection is the excitation-loop check, not the +FS code.** At gain
+  1/2 an open sensor drives the PGA inputs to the rail and the output is
+  undefined (one die reads −55 % FS, another wanders near zero and looks like a
+  valid −170 °C). `loop_check_step()` in `rtd_module.c` round-robins one
+  channel at a time into the `(REFP0−REFN0)/4` monitor (`RTD_LOOP_*`); the
+  channel holds its last status meanwhile. Keep `VREF = REF0` in
+  `ads1220_enter_ref_monitor()` — the VREF bits select which pair is monitored
+  (with VREF = internal the monitor reads 0 and every channel goes OPEN).
 - **The config-readback liveness check cannot detect a stuck-selected chip.** A
   CS line that never reaches its ADS1220 (isolator CA-IS3740**L** defaults its
   output LOW → chip permanently selected) makes that chip answer every

@@ -47,6 +47,7 @@ extern "C" {
 
 /* Config register 0: MUX[7:4] GAIN[3:1] PGA_BYPASS[0]. */
 #define ADS1220_MUX_AIN0_AIN1       (0x0u << 4)
+#define ADS1220_MUX_REF_MON         (0xCu << 4)   /* (V(REFPx) - V(REFNx)) / 4, system monitor */
 #define ADS1220_GAIN_1              (0x0u << 1)
 #define ADS1220_GAIN_2              (0x1u << 1)
 #define ADS1220_GAIN_4              (0x2u << 1)
@@ -95,6 +96,15 @@ void ads1220_init(const uint8_t gain_code[ADS1220_CHANNEL_COUNT]);
 /** Re-write config register 0 with a new gain (ADS1220_GAIN_*) and restart
  *  conversion. The next results need a settle period (see rtd_module). */
 void ads1220_set_gain(uint8_t ch, uint8_t gain_code);
+
+/** Switch the channel to the excitation-loop monitor: MUX = (REFPx-REFNx)/4.
+ *  The device converts the monitor against its internal 2.048 V reference
+ *  automatically; VREF must stay = REF0 because it selects WHICH reference
+ *  pair is monitored (with VREF = internal the monitor reads 0 — verified on
+ *  hardware). IDACs keep running. A healthy loop (2·I·RREF ≈ 2.0 V) reads
+ *  ≈ 0.244 FS; an open sensor (no current through RREF) reads ≈ 0. Restore
+ *  with ads1220_set_gain(). */
+void ads1220_enter_ref_monitor(uint8_t ch);
 
 /**
  * Read the latest conversion result with the RDATA command.

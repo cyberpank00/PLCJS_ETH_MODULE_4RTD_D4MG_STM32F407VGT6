@@ -113,6 +113,22 @@ void ads1220_set_gain(uint8_t ch, uint8_t gain_code)
     configure(ch, gain_code);
 }
 
+void ads1220_enter_ref_monitor(uint8_t ch)
+{
+    if (ch >= ADS1220_CHANNEL_COUNT) {
+        return;
+    }
+    const uint8_t regs[4] = {
+        ADS1220_MUX_REF_MON | ADS1220_GAIN_1,
+        ADS1220_CFG1_DEFAULT,
+        ADS1220_CFG2_DEFAULT,   /* VREF = REF0 selects WHICH pair the monitor measures */
+        ADS1220_CFG3_DEFAULT,
+    };
+    s_cfg0[ch] = regs[0];
+    write_regs(ch, 0u, regs, 4u);
+    send_cmd(ch, ADS1220_CMD_START);
+}
+
 bool ads1220_read_data(uint8_t ch, int32_t* code_out)
 {
     if (ch >= ADS1220_CHANNEL_COUNT || code_out == NULL) {
