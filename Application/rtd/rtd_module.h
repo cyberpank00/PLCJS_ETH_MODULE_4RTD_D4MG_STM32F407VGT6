@@ -17,7 +17,7 @@
   *      scale (unless it is a pure-resistance mode),
   *    - flags faults from the code itself (the ADS1220 has no fault register):
   *      open sensor / over-range, shorted sensor, converter not responding,
-  *    - drives its status LED (solid = active, off = inactive, fast blink =
+  *    - drives its status LED (solid = active, off = inactive, 2 Hz fade =
   *      fault).
   ******************************************************************************
   */

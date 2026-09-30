@@ -12,6 +12,7 @@
 
 #include "ads1220.h"
 #include "calstore.h"
+#include "chled_pwm.h"
 #include "main.h"
 #include "rtd_scales.h"
 #include "settings.h"
@@ -55,20 +56,9 @@
  * flags and the channel LED. */
 #define RTD_FAULT_CONFIRM_TICKS 3u
 
-/* Channel status LED blink half-period on fault, ms. */
-#define RTD_FAULT_BLINK_MS      100u
-
-typedef struct {
-    GPIO_TypeDef* port;
-    uint16_t      pin;
-} gpio_ref_t;
-
-static const gpio_ref_t s_stat[RTD_MODULE_CHANNEL_COUNT] = {
-    { RTD0_STAT_GPIO_Port, RTD0_STAT_Pin },
-    { RTD1_STAT_GPIO_Port, RTD1_STAT_Pin },
-    { RTD2_STAT_GPIO_Port, RTD2_STAT_Pin },
-    { RTD3_STAT_GPIO_Port, RTD3_STAT_Pin },
-};
+/* Channel status LED on fault: 2 Hz fade in / fade out (triangle in time,
+ * squared for a perceptually even ramp) instead of a hard blink. */
+#define RTD_FAULT_FADE_MS       500u
 
 /* Runtime, derived from settings on rtd_module_apply_config(). */
 static rtd_channel_status_t s_status[RTD_MODULE_CHANNEL_COUNT];
@@ -100,14 +90,12 @@ static uint8_t  s_smooth[RTD_MODULE_CHANNEL_COUNT];
 static float    s_ema[RTD_MODULE_CHANNEL_COUNT];
 static bool     s_ema_seeded[RTD_MODULE_CHANNEL_COUNT];
 
-/* LED blink state. */
-static uint16_t s_blink_timer;
-static uint8_t  s_blink_on;
+/* LED fade phase, ms within RTD_FAULT_FADE_MS. */
+static uint16_t s_fade_ms;
 
 static inline void stat_set(uint8_t ch, bool on)
 {
-    HAL_GPIO_WritePin(s_stat[ch].port, s_stat[ch].pin,
-                      on ? GPIO_PIN_SET : GPIO_PIN_RESET);
+    chled_pwm_set(ch, on ? (uint8_t)CHLED_PWM_MAX : 0u);
 }
 
 static uint8_t resolve_gclass(uint8_t ch)
@@ -149,6 +137,7 @@ void rtd_module_init(void)
 {
     uint8_t gain_code[RTD_MODULE_CHANNEL_COUNT];
 
+    chled_pwm_init();
     for (uint8_t ch = 0; ch < RTD_MODULE_CHANNEL_COUNT; ch++) {
         s_cal_override[ch] = RTD_CAL_OVERRIDE_AUTO;
         s_status[ch].temperature = NAN;
@@ -407,17 +396,20 @@ int16_t rtd_module_int16_view(uint8_t ch)
 
 void rtd_module_led_tick(uint16_t period_ms)
 {
-    s_blink_timer = (uint16_t)(s_blink_timer + period_ms);
-    if (s_blink_timer >= RTD_FAULT_BLINK_MS) {
-        s_blink_timer = 0u;
-        s_blink_on    = (uint8_t)(!s_blink_on);
-    }
+    s_fade_ms = (uint16_t)((s_fade_ms + period_ms) % RTD_FAULT_FADE_MS);
+
+    /* Triangle 0 -> 1 -> 0 over the period, squared so the eye sees an even
+     * ramp (LED brightness is roughly logarithmic). */
+    const uint16_t half = RTD_FAULT_FADE_MS / 2u;
+    const float    tri  = (s_fade_ms < half) ? (float)s_fade_ms / (float)half
+                                             : (float)(RTD_FAULT_FADE_MS - s_fade_ms) / (float)half;
+    const uint8_t  fade = (uint8_t)(tri * tri * (float)CHLED_PWM_MAX + 0.5f);
 
     for (uint8_t ch = 0; ch < RTD_MODULE_CHANNEL_COUNT; ch++) {
         if (!s_enabled[ch]) {
             stat_set(ch, false);
         } else if (s_status[ch].fault) {
-            stat_set(ch, s_blink_on != 0u);
+            chled_pwm_set(ch, fade);
         } else {
             stat_set(ch, true);
         }

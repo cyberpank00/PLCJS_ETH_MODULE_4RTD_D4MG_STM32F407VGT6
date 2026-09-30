@@ -83,9 +83,9 @@ void settings_reset_to_defaults(void)
     s_settings.gateway[2]       = SETTINGS_DEF_GW2;
     s_settings.gateway[3]       = SETTINGS_DEF_GW3;
 
-    /* Per-channel RTD defaults: disabled, Pt100, default (ГОСТ/IEC) α. */
+    /* Per-channel RTD defaults: enabled, Pt1000, default (ГОСТ/IEC) α. */
     for (uint8_t ch = 0; ch < SETTINGS_RTD_CHANNELS; ch++) {
-        s_settings.ch_enabled[ch]     = 0u;
+        s_settings.ch_enabled[ch]     = SETTINGS_DEF_CH_ENABLED;
         s_settings.ch_type[ch]        = SETTINGS_DEF_CH_TYPE;
         s_settings.ch_alpha_mode[ch]  = 0u;
         s_settings.ch_smooth[ch]      = SETTINGS_DEF_CH_SMOOTH;

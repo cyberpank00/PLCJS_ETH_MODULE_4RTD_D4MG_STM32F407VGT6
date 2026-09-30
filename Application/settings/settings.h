@@ -64,7 +64,8 @@ extern "C" {
 #define SETTINGS_DEF_GW3            1u
 
 /* Per-channel RTD defaults. */
-#define SETTINGS_DEF_CH_TYPE        8u    /* RTD_TYPE_PT100 */
+#define SETTINGS_DEF_CH_TYPE        18u   /* RTD_TYPE_PT1000 */
+#define SETTINGS_DEF_CH_ENABLED     1u
 
 /* Software smoothing (EMA) levels: 0 = off, 1..3 => alpha 1/4, 1/8, 1/16.
  * Applied to the calibrated resistance before temperature conversion. */

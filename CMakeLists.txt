@@ -58,6 +58,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Application sources
     Application/app/app.c
     Application/led/led_module.c
+    Application/led/chled_pwm.c
     Application/temp/temp_module.c
     Application/button/button_module.c
     Application/ksz8863/ksz8863.c
