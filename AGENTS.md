@@ -5,6 +5,12 @@ ADS1220, STM32F407VGT6, KSZ8863 switch, Modbus TCP). **Board HW2.1**; the
 HW1.x firmware (MAX31865 + ADG849 range switch) is tagged `hw1.1-last`.
 This file is the orientation map for agents; user-facing documentation lives in
 `README.md` / `README_EN.md`.
+Both `README.md` and `README_EN.md` are operator-first: DOC product/PCB images,
+specifications, terminal wiring, startup, sensor codes, timing/validity,
+diagnostics, network, registers, calibration and OTA. MCU pinout, ADC setup,
+Flash layout and build commands are collected in the final developer-reference
+section. Keep the structure and technical parameters aligned across languages. Do not copy
+12DI enclosure/electrical ratings into 4RTD without board-specific confirmation.
 
 Derived from the 12DI variant (`Initial 4RTD firmware adapted from 12DI
 variant`), then extended with the analog acquisition and calibration chain. It
