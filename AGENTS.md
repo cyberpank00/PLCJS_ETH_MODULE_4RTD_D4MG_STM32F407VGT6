@@ -169,6 +169,9 @@ an entry there in the same commit as the bump.
   11 as a third staging sector (currently unused — staging is sectors 8–9 only).
   If the bootloader is ever extended to use it, 4RTD calibration is destroyed.
   Any change to bootloader staging must account for this repo.
+  BL 1.8 additionally rejects Flash writes at/above `0x080C0000` and erases
+  outside sectors 5..9. These guards protect both settings and calibration;
+  keep them when changing the bootloader's recovery or installer code.
 
 ### Threading
 - LwIP calls must run in the tcpip thread; the live network re-apply goes through
@@ -299,6 +302,14 @@ boot-request cell at `0x2001FFF0` (`BOOT_REQUEST_MAGIC = 0xB007CAFE`).
 travel in OTA metadata, not the header.
 
 OTA acceptance: `product_id` exact match **and** `hw_revision` major byte match.
+
+With BL 1.8, FINALIZE saves verified staging and waits for explicit INSTALL,
+including after reset. A durably started installation is retried from the
+beginning after reset; invalid/lost bootloader metadata enters network recovery.
+The packed header, application address and reserved RAM cell are unchanged.
+Node and ModbusTool 1.3.15 select through PDP and verify the same MAC on the OTA
+TCP connection (BL IR `0x0019..0x001B`). These are bootloader registers, not
+additions to the 4RTD application map. Protected writes require BL 1.8+.
 
 ## Multi-repo workspace
 
