@@ -147,8 +147,9 @@ Bump checklist — all three places, they drift easily:
 2. Version rows in `README.md`.
 3. The same rows in `README_EN.md`.
 
-A chronological version-review / changelog file is planned; once it exists, add
-an entry there in the same commit as the bump.
+Changelog: every version bump also adds an entry (`DATE -- reason`, appended at the end)
+to the shared `CHANGELOG.md` / `CHANGELOG.txt` in the bootloader repo
+(`BOOTLOADER_PLCJS_ETH_MODULE_STM32F407VGT6`) - one file for all repos.
 
 ### Persistence and Flash sectors
 
