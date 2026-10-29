@@ -18,7 +18,7 @@ at the same time.
 
 - **Model:** PLCJS ETH 4RTD / D4MG
 - **Hardware revision:** HW2.1 — STM32F407VGT6, four ADS1220 ADCs
-- **Application version:** 2.10 (`0x020A`)
+- **Application version:** 2.11 (`0x020B`)
 - **Channels:** CH0…CH3; each channel has `S+`, `S−` and `E` terminals.
 
 > All register addresses below are **zero-based Modbus protocol addresses**.
@@ -386,11 +386,12 @@ use float32 for a reading in ohms.
 | 324…327 | u16 ×4 | Status flags and fault code |
 | 328…335 | int32 ×4 | Signed 24-bit ADC code |
 | 336…339 | u16 ×4 | Active gain class, 0…4 |
-| 120 / 121 | u16 / u16 | Application version: major / minor (2 / 10) |
+| 120 / 121 | u16 / u16 | Application version: major / minor (2 / 11) |
 | 122 / 123 | u16 / u16 | Uptime in seconds: **low / high** word |
 | 125 | u16 | Module identifier `0x04D1` |
 | 126 | int16 | MCU temperature, 0.1 °C per count |
 | 127 / 128 | u16 / u16 | Calibration lock mask: bits 0…15 / 16…19 |
+| 129 / 130 | u16 / u16 | Settings saves: successful saves since boot (Flash written and verified by read-back) / last result: 0 none, 1 OK, 2 failed |
 
 Temperature is NaN in resistance modes, with a forced calibration gain class,
 and on a confirmed fault. NaN is also used for unavailable measurements.
@@ -583,7 +584,7 @@ Invalid data causes factory defaults to be loaded. Calibration consists of
 Sector 11 belongs to calibration and must not be used for staging.
 
 Identity in [fw_header.h](Application/fw_header/fw_header.h):
-`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0201`, `FW_VERSION_VALUE=0x020A`.
+`FW_PRODUCT_ID=0x504C0403`, `FW_HW_REVISION=0x0201`, `FW_VERSION_VALUE=0x020B`.
 The `fw_header_t` header is at image offset `0x200`. The linker places the
 application at `0x08040000` and reserves the top 16 bytes of RAM for the
 bootloader request.
