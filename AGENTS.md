@@ -301,7 +301,7 @@ etconn_delete() freed and the
 
 This repo was branched from 12DI. The shared-subsystem catch-up has been done:
 `ksz8863.c/h`, `nanomodbus.c`, `discovery.c`, `net_id.c`, `button_module.c` and
-`modbus_tcp_server.c` are now **byte-identical** to 12DQ/12DI (which agree with
+`modbus_tcp_server.c` are now **byte-identical** to 12DO/12DI (which agree with
 each other). The KSZ8863 cold-boot reset policy, the SMI-dead recovery service,
 the HR118 `0x8863` operator command and the FC15/FC16 malformed-frame hardening
 are all present.
